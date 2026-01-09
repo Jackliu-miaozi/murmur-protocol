@@ -14,16 +14,23 @@
 
 - **平台**：Polkadot Asset Hub
 - **执行环境**：EVM / revm
-- **标准**：ERC-20 (vDOT), ERC-721 (NFT Memory)
+- **标准**：ERC-20 (vDOT), ERC-1155 (VP), ERC-721 (NFT Memory)
+- **依赖**：OpenZeppelin Contracts v5
 
 ## 核心合约
 
-- `VDOTVault.sol` - vDOT 质押与赎回
-- `Topic.sol` - Topic 生命周期管理
-- `VPSystem.sol` - VP 生成与消耗
-- `MemoryNFT.sol` - 精选评论 NFT
+- `TopicFactory.sol` - Topic 创建、关闭与状态机
+- `TopicVault.sol` - vDOT 锁仓与赎回
+- `VPToken.sol` - Topic-scoped VP 余额与消耗
+- `MessageRegistry.sol` - 发言与点赞记录
+- `AIScoreVerifier.sol` - AI 强度评分签名验证
+- `CurationModule.sol` - 精选收录逻辑
+- `NFTMinter.sol` - Topic 结束后的 NFT 记忆铸造
+
+## 辅助合约
+
+- `interfaces/*.sol` - 外部模块接口
 
 ## 相关文档
 
 - [白皮书](../../docs/whitepaper.md)
-
