@@ -14,12 +14,12 @@ module.exports = {
     hardhat: {
       polkavm: true,
       nodeConfig: {
-        nodeBinaryPath: 'bin/revive-dev-node',
+        nodeBinaryPath: "bin/revive-dev-node",
         rpcPort: 8000,
         dev: true,
       },
       adapterConfig: {
-        adapterBinaryPath: 'bin/eth-rpc',
+        adapterBinaryPath: "bin/eth-rpc",
         dev: true,
       },
     },
@@ -29,7 +29,7 @@ module.exports = {
     },
     passetHub: {
       polkavm: true,
-      url: 'https://testnet-passet-hub-eth-rpc.polkadot.io',
+      url: "https://testnet-passet-hub-eth-rpc.polkadot.io",
       accounts: [vars.get("PRIVATE_KEY")],
     },
   },

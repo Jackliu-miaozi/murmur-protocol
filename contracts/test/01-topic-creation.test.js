@@ -1,187 +1,149 @@
-const { expect } = require("chai");
-const { ethers } = require("hardhat");
-const { time } = require("@nomicfoundation/hardhat-network-helpers");
-const { deployContracts, createUserWithVP, createTopic } = require("./fixtures");
+const { expect } = require('chai');
+const { ethers } = require('hardhat');
+const { deployContracts, createUserWithVP, createTopic } = require('./fixtures');
 
-describe("Step 1: Topic Creation", function () {
+describe('TopicFactory', function () {
   let contracts;
-  let alice, bob;
+  let owner;
+  let addr1;
 
-  const VDOT_AMOUNT = ethers.parseEther("1000"); // 1000 vDOT
-  const DURATION = 86400; // 24 hours
-  const FREEZE_WINDOW = 600; // 10 minutes
+  const VDOT_AMOUNT = ethers.parseEther("1000");
+  const DURATION = 86400;
+  const FREEZE_WINDOW = 600;
   const CURATED_LIMIT = 50;
 
   beforeEach(async function () {
+    // Get contracts and signers
     contracts = await deployContracts();
-    alice = contracts.alice;
-    bob = contracts.bob;
+    owner = contracts.alice;
+    addr1 = contracts.bob;
   });
 
-  describe("vDOT Minting and VP Staking", function () {
-    it("Should mint vDOT tokens to Alice", async function () {
+  describe('Basic functionality', function () {
+    it('Should mint vDOT tokens to owner', async function () {
       const { vdotToken } = contracts;
       
-      // Mint vDOT to Alice
-      await vdotToken.connect(contracts.deployer).mint(alice.address, VDOT_AMOUNT);
+      await vdotToken.connect(contracts.deployer).mint(owner.address, VDOT_AMOUNT);
       
-      const balance = await vdotToken.balanceOf(alice.address);
+      const balance = await vdotToken.balanceOf(owner.address);
       expect(balance).to.equal(VDOT_AMOUNT);
     });
 
-    it("Should stake vDOT and receive VP correctly", async function () {
+    it('Should stake vDOT and receive VP correctly', async function () {
       const { vdotToken, vpToken } = contracts;
       
-      // Mint vDOT to Alice
-      await vdotToken.connect(contracts.deployer).mint(alice.address, VDOT_AMOUNT);
+      await vdotToken.connect(contracts.deployer).mint(owner.address, VDOT_AMOUNT);
+      await vdotToken.connect(owner).approve(await vpToken.getAddress(), VDOT_AMOUNT);
       
-      // Approve and stake
-      await vdotToken.connect(alice).approve(await vpToken.getAddress(), VDOT_AMOUNT);
-      const tx = await vpToken.connect(alice).stakeVdot(VDOT_AMOUNT);
-      const receipt = await tx.wait();
-      
-      // Verify VP calculation: VP = 100 * √vDOT
-      // For 1000 vDOT: VP ≈ 3162 (with 18 decimals)
       const expectedVP = await vpToken.calculateVP(VDOT_AMOUNT);
-      const actualVP = await vpToken.balanceOf(alice.address);
       
+      // Check if the VdotStaked event is emitted with the correct values
+      await expect(vpToken.connect(owner).stakeVdot(VDOT_AMOUNT))
+        .to.emit(vpToken, 'VdotStaked')
+        .withArgs(owner.address, VDOT_AMOUNT, expectedVP);
+      
+      const actualVP = await vpToken.balanceOf(owner.address);
       expect(actualVP).to.equal(expectedVP);
-      expect(actualVP).to.be.gt(ethers.parseEther("3000")); // Should be > 3000
-      expect(actualVP).to.be.lt(ethers.parseEther("3200")); // Should be < 3200
+      expect(actualVP).to.be.gt(ethers.parseEther("3000"));
+      expect(actualVP).to.be.lt(ethers.parseEther("3200"));
       
-      // Verify event
-      const event = receipt.logs.find(log => {
-        try {
-          const parsed = vpToken.interface.parseLog(log);
-          return parsed && parsed.name === "VdotStaked";
-        } catch {
-          return false;
-        }
-      });
-      expect(event).to.not.be.undefined;
-      
-      // Verify vDOT is locked in VPToken contract
-      const stakedAmount = await vpToken.stakedVdot(alice.address);
+      const stakedAmount = await vpToken.stakedVdot(owner.address);
       expect(stakedAmount).to.equal(VDOT_AMOUNT);
     });
 
-    it("Should calculate VP correctly for different amounts", async function () {
+    it('Should calculate VP correctly for different amounts', async function () {
       const { vpToken } = contracts;
       
-      // Test with 100 vDOT: VP = 100 * √100 ≈ 1000
       const vp100 = await vpToken.calculateVP(ethers.parseEther("100"));
       expect(vp100).to.be.closeTo(ethers.parseEther("1000"), ethers.parseEther("50"));
       
-      // Test with 10000 vDOT: VP = 100 * √10000 = 10000
       const vp10000 = await vpToken.calculateVP(ethers.parseEther("10000"));
       expect(vp10000).to.equal(ethers.parseEther("10000"));
     });
-  });
 
-  describe("Creation Cost Calculation", function () {
-    it("Should calculate base creation cost correctly with no active topics", async function () {
+    it('Should calculate base creation cost correctly with no active topics', async function () {
       const { topicFactory } = contracts;
       
-      // With 0 active topics, cost should be base cost (1000 VP)
       const cost = await topicFactory.quoteCreationCost();
       expect(cost).to.equal(ethers.parseEther("1000"));
     });
 
-    it("Should calculate creation cost with active topics", async function () {
+    it('Should calculate creation cost with active topics', async function () {
       const { topicFactory, vdotToken, vpToken } = contracts;
       
-      // Give Alice enough VP to create multiple topics
       const largeAmount = ethers.parseEther("10000");
-      await vdotToken.connect(contracts.deployer).mint(alice.address, largeAmount);
-      await vdotToken.connect(alice).approve(await vpToken.getAddress(), largeAmount);
-      await vpToken.connect(alice).stakeVdot(largeAmount);
+      await vdotToken.connect(contracts.deployer).mint(owner.address, largeAmount);
+      await vdotToken.connect(owner).approve(await vpToken.getAddress(), largeAmount);
+      await vpToken.connect(owner).stakeVdot(largeAmount);
       
-      // Create first topic (should cost base cost)
       const metadataHash1 = ethers.keccak256(ethers.toUtf8Bytes("Topic 1"));
-      await topicFactory.connect(alice).createTopic(metadataHash1, DURATION, FREEZE_WINDOW, CURATED_LIMIT);
+      await topicFactory.connect(owner).createTopic(metadataHash1, DURATION, FREEZE_WINDOW, CURATED_LIMIT);
       
-      // Second topic should cost more: baseCost * (1 + alpha * log(1 + 1))
-      // alpha = 2.0, log(2) ≈ 0.693, so multiplier ≈ 1 + 2 * 0.693 ≈ 2.386
       const cost2 = await topicFactory.quoteCreationCost();
       expect(cost2).to.be.gt(ethers.parseEther("1000"));
       
-      // Create second topic
       const metadataHash2 = ethers.keccak256(ethers.toUtf8Bytes("Topic 2"));
-      await topicFactory.connect(alice).createTopic(metadataHash2, DURATION, FREEZE_WINDOW, CURATED_LIMIT);
+      await topicFactory.connect(owner).createTopic(metadataHash2, DURATION, FREEZE_WINDOW, CURATED_LIMIT);
       
-      // Third topic should cost even more
       const cost3 = await topicFactory.quoteCreationCost();
       expect(cost3).to.be.gt(cost2);
     });
   });
 
-  describe("Topic Creation", function () {
+  describe('Topic Creation', function () {
     beforeEach(async function () {
-      // Setup: Alice stakes vDOT and gets VP
-      await createUserWithVP(contracts, alice, VDOT_AMOUNT);
+      // Setup: owner stakes vDOT and gets VP
+      await createUserWithVP(contracts, owner, VDOT_AMOUNT);
     });
 
-    it("Should create topic successfully", async function () {
+    it('Should create topic successfully', async function () {
       const { topicFactory, vpToken } = contracts;
       
-      // Get initial VP balance
-      const initialVP = await vpToken.balanceOf(alice.address);
-      
-      // Get creation cost
+      const initialVP = await vpToken.balanceOf(owner.address);
       const creationCost = await topicFactory.quoteCreationCost();
       
-      // Create topic
       const metadataHash = ethers.keccak256(ethers.toUtf8Bytes("Web3 Future Development"));
-      const tx = await topicFactory.connect(alice).createTopic(
-        metadataHash,
-        DURATION,
-        FREEZE_WINDOW,
-        CURATED_LIMIT
-      );
-      const receipt = await tx.wait();
+      const expectedTopicId = await topicFactory.topicCounter() + 1n;
       
-      // Verify VP was deducted
-      const finalVP = await vpToken.balanceOf(alice.address);
+      // Check if the TopicCreated event is emitted with the correct values
+      await expect(
+        topicFactory.connect(owner).createTopic(
+          metadataHash,
+          DURATION,
+          FREEZE_WINDOW,
+          CURATED_LIMIT
+        )
+      )
+        .to.emit(topicFactory, 'TopicCreated')
+        .withArgs(expectedTopicId, owner.address, metadataHash, DURATION, FREEZE_WINDOW, CURATED_LIMIT);
+      
+      const finalVP = await vpToken.balanceOf(owner.address);
       expect(finalVP).to.equal(initialVP - creationCost);
       
-      // Verify topic was created
       const topicId = await topicFactory.topicCounter();
       const topic = await topicFactory.getTopic(topicId);
       
       expect(topic.topicId).to.equal(topicId);
-      expect(topic.creator).to.equal(alice.address);
+      expect(topic.creator).to.equal(owner.address);
       expect(topic.metadataHash).to.equal(metadataHash);
       expect(topic.duration).to.equal(DURATION);
       expect(topic.freezeWindow).to.equal(FREEZE_WINDOW);
       expect(topic.curatedLimit).to.equal(CURATED_LIMIT);
-      expect(topic.status).to.equal(1); // TopicStatus.Live
+      expect(topic.status).to.equal(1);
       expect(topic.minted).to.be.false;
-      
-      // Verify event
-      const event = receipt.logs.find(log => {
-        try {
-          const parsed = topicFactory.interface.parseLog(log);
-          return parsed && parsed.name === "TopicCreated";
-        } catch {
-          return false;
-        }
-      });
-      expect(event).to.not.be.undefined;
     });
 
-    it("Should fail if VP balance is insufficient", async function () {
+    it('Should fail if VP balance is insufficient', async function () {
       const { topicFactory, vdotToken, vpToken } = contracts;
       
-      // Give Alice only a small amount of vDOT
       const smallAmount = ethers.parseEther("100");
-      await vdotToken.connect(contracts.deployer).mint(alice.address, smallAmount);
-      await vdotToken.connect(alice).approve(await vpToken.getAddress(), smallAmount);
-      await vpToken.connect(alice).stakeVdot(smallAmount);
+      await vdotToken.connect(contracts.deployer).mint(owner.address, smallAmount);
+      await vdotToken.connect(owner).approve(await vpToken.getAddress(), smallAmount);
+      await vpToken.connect(owner).stakeVdot(smallAmount);
       
-      // Try to create topic (should fail because creation cost is 1000 VP)
       const metadataHash = ethers.keccak256(ethers.toUtf8Bytes("Test Topic"));
       await expect(
-        topicFactory.connect(alice).createTopic(
+        topicFactory.connect(owner).createTopic(
           metadataHash,
           DURATION,
           FREEZE_WINDOW,
@@ -190,13 +152,12 @@ describe("Step 1: Topic Creation", function () {
       ).to.be.revertedWith("TopicFactory: insufficient VP");
     });
 
-    it("Should fail with invalid parameters", async function () {
+    it('Should fail with invalid parameters', async function () {
       const { topicFactory } = contracts;
       const metadataHash = ethers.keccak256(ethers.toUtf8Bytes("Test Topic"));
       
-      // Invalid metadata hash (zero)
       await expect(
-        topicFactory.connect(alice).createTopic(
+        topicFactory.connect(owner).createTopic(
           ethers.ZeroHash,
           DURATION,
           FREEZE_WINDOW,
@@ -204,9 +165,8 @@ describe("Step 1: Topic Creation", function () {
         )
       ).to.be.revertedWith("TopicFactory: invalid metadata hash");
       
-      // Invalid duration (zero)
       await expect(
-        topicFactory.connect(alice).createTopic(
+        topicFactory.connect(owner).createTopic(
           metadataHash,
           0,
           FREEZE_WINDOW,
@@ -214,19 +174,17 @@ describe("Step 1: Topic Creation", function () {
         )
       ).to.be.revertedWith("TopicFactory: invalid duration");
       
-      // Invalid freeze window (>= duration)
       await expect(
-        topicFactory.connect(alice).createTopic(
+        topicFactory.connect(owner).createTopic(
           metadataHash,
           DURATION,
-          DURATION, // freezeWindow >= duration
+          DURATION,
           CURATED_LIMIT
         )
       ).to.be.revertedWith("TopicFactory: invalid freeze window");
       
-      // Invalid curated limit (zero)
       await expect(
-        topicFactory.connect(alice).createTopic(
+        topicFactory.connect(owner).createTopic(
           metadataHash,
           DURATION,
           FREEZE_WINDOW,
@@ -234,9 +192,8 @@ describe("Step 1: Topic Creation", function () {
         )
       ).to.be.revertedWith("TopicFactory: invalid curated limit");
       
-      // Invalid curated limit (> 100)
       await expect(
-        topicFactory.connect(alice).createTopic(
+        topicFactory.connect(owner).createTopic(
           metadataHash,
           DURATION,
           FREEZE_WINDOW,
@@ -245,35 +202,32 @@ describe("Step 1: Topic Creation", function () {
       ).to.be.revertedWith("TopicFactory: invalid curated limit");
     });
 
-    it("Should track active topic count correctly", async function () {
+    it('Should track active topic count correctly', async function () {
       const { topicFactory } = contracts;
       
-      // Initially no active topics
       const activeCount1 = await topicFactory.activeTopicCount();
       expect(activeCount1).to.equal(0);
       
       // Create first topic
-      await createTopic(contracts, alice, DURATION, FREEZE_WINDOW, CURATED_LIMIT);
+      await createTopic(contracts, owner, DURATION, FREEZE_WINDOW, CURATED_LIMIT);
       const activeCount2 = await topicFactory.activeTopicCount();
       expect(activeCount2).to.equal(1);
       
       // Create second topic
-      await createTopic(contracts, alice, DURATION, FREEZE_WINDOW, CURATED_LIMIT);
+      await createTopic(contracts, owner, DURATION, FREEZE_WINDOW, CURATED_LIMIT);
       const activeCount3 = await topicFactory.activeTopicCount();
       expect(activeCount3).to.equal(2);
     });
 
-    it("Should register user participation in topic", async function () {
+    it('Should register user participation in topic', async function () {
       const { topicFactory } = contracts;
       
-      const topicId = await createTopic(contracts, alice, DURATION, FREEZE_WINDOW, CURATED_LIMIT);
+      const topicId = await createTopic(contracts, owner, DURATION, FREEZE_WINDOW, CURATED_LIMIT);
       
-      // Verify Alice is registered as participant
-      const participated = await topicFactory.userParticipated(topicId, alice.address);
+      const participated = await topicFactory.userParticipated(topicId, owner.address);
       expect(participated).to.be.true;
       
-      // Verify topic is in user's topic list
-      const userTopics = await topicFactory.getUserTopics(alice.address);
+      const userTopics = await topicFactory.getUserTopics(owner.address);
       expect(userTopics).to.include(topicId);
     });
   });
