@@ -1,7 +1,0 @@
-export { vpTokenContract } from './vpToken'
-export { topicFactoryContract } from './topicFactory'
-export { messageRegistryContract } from './messageRegistry'
-export { nftMinterContract } from './nftMinter'
-export { CONTRACT_ADDRESSES } from './addresses'
-export { getProvider, disconnectProvider, getContract } from './api'
-export { ABIS } from './api'
