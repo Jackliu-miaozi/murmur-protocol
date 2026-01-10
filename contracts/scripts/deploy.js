@@ -126,74 +126,58 @@ async function main() {
   let messageRegistryAddress;
   let deploymentHelperAddress = null;
 
-  // Use placeholder method for local networks, DeploymentHelper for testnets
+  // Use placeholder method for local networks (CREATE2 not supported on Polkadot VM)
+  // Deploy in order: MessageRegistry -> CurationModule
+  // Accept that MessageRegistry will have wrong CurationModule initially, but update it
   if (isLocalNetwork) {
-    // Use placeholder method (more reliable on Polkadot VM)
-    console.log("5️⃣  Deploying placeholder CurationModule...");
+    console.log("5️⃣  Deploying contracts with circular dependency (local network)...");
+    console.log("   ⚠️  Note: CREATE2 not supported on Polkadot VM, using placeholder method");
+    
+    const MessageRegistry = await hre.ethers.getContractFactory(
+      "MessageRegistry"
+    );
     const CurationModule = await hre.ethers.getContractFactory(
       "CurationModule"
     );
+    
+    // Deploy placeholder CurationModule first (needed by MessageRegistry constructor)
+    console.log("   Step 1: Deploying placeholder CurationModule...");
     const placeholderCuration = await CurationModule.deploy(
       topicFactoryAddress,
-      deployer.address, // placeholder MessageRegistry address
+      deployer.address, // placeholder MessageRegistry
       deployer.address
     );
     await placeholderCuration.waitForDeployment();
     const placeholderCurationAddress = await placeholderCuration.getAddress();
-    console.log(
-      "   📌 Placeholder CurationModule deployed to:",
-      placeholderCurationAddress
-    );
-
-    console.log(
-      "6️⃣  Deploying MessageRegistry with placeholder CurationModule..."
-    );
-    const MessageRegistry = await hre.ethers.getContractFactory(
-      "MessageRegistry"
-    );
+    console.log("      ✅ Placeholder CurationModule:", placeholderCurationAddress);
+    
+    // Deploy MessageRegistry with placeholder
+    console.log("   Step 2: Deploying MessageRegistry with placeholder...");
     const messageRegistry = await MessageRegistry.deploy(
       topicFactoryAddress,
       topicVaultAddress,
+      vpTokenAddress,
       aiScoreVerifierAddress,
       placeholderCurationAddress,
       deployer.address
     );
     await messageRegistry.waitForDeployment();
-    const tempMessageRegistryAddress = await messageRegistry.getAddress();
-    console.log(
-      "   ✅ Temporary MessageRegistry deployed to:",
-      tempMessageRegistryAddress
-    );
-
-    console.log(
-      "7️⃣  Deploying real CurationModule with temporary MessageRegistry..."
-    );
-    const realCurationModule = await CurationModule.deploy(
+    messageRegistryAddress = await messageRegistry.getAddress();
+    console.log("      ✅ MessageRegistry deployed to:", messageRegistryAddress);
+    
+    // Deploy final CurationModule with real MessageRegistry address
+    // This is what matters: CurationModule must have correct MessageRegistry for auth checks
+    console.log("   Step 3: Deploying final CurationModule with real MessageRegistry address...");
+    const finalCurationModule = await CurationModule.deploy(
       topicFactoryAddress,
-      tempMessageRegistryAddress,
+      messageRegistryAddress, // Use real MessageRegistry address - CRITICAL for auth!
       deployer.address
     );
-    await realCurationModule.waitForDeployment();
-    curationModuleAddress = await realCurationModule.getAddress();
-    console.log(
-      "   ✅ Real CurationModule deployed to:",
-      curationModuleAddress
-    );
-
-    console.log("8️⃣  Redeploying MessageRegistry with real CurationModule...");
-    const finalMessageRegistry = await MessageRegistry.deploy(
-      topicFactoryAddress,
-      topicVaultAddress,
-      aiScoreVerifierAddress,
-      curationModuleAddress,
-      deployer.address
-    );
-    await finalMessageRegistry.waitForDeployment();
-    messageRegistryAddress = await finalMessageRegistry.getAddress();
-    console.log(
-      "   ✅ Final MessageRegistry deployed to:",
-      messageRegistryAddress
-    );
+    await finalCurationModule.waitForDeployment();
+    curationModuleAddress = await finalCurationModule.getAddress();
+    console.log("      ✅ Final CurationModule deployed to:", curationModuleAddress);
+    
+    console.log("\n   ⚠️  Address mismatch will be fixed after deployment using setter functions");
   } else {
     // Use DeploymentHelper for testnets
     console.log("5️⃣  Deploying DeploymentHelper...");
@@ -219,6 +203,7 @@ async function main() {
     console.log("   ⏳ Calling deployBoth...");
     const deployTx = await deploymentHelper.deployBoth(
       topicVaultAddress,
+      vpTokenAddress,
       aiScoreVerifierAddress,
       curationSalt,
       messageSalt
@@ -250,10 +235,102 @@ async function main() {
     console.log("   ✅ MessageRegistry deployed to:", messageRegistryAddress);
   }
 
-  console.log("\n=== Phase 3: Configure Contracts ===\n");
+  console.log("\n=== Phase 3: Verify Contract Configuration ===\n");
+
+  // Verify CurationModule and MessageRegistry are correctly linked
+  console.log("🔍 Verifying CurationModule and MessageRegistry addresses...");
+  const curationModule = await hre.ethers.getContractAt(
+    "CurationModule",
+    curationModuleAddress
+  );
+  const messageRegistry = await hre.ethers.getContractAt(
+    "MessageRegistry",
+    messageRegistryAddress
+  );
+
+  const curationModuleMessageRegistry = await curationModule.messageRegistry();
+  const messageRegistryCurationModule = await messageRegistry.curationModule();
+
+  // Check if addresses match
+  const curationModuleMatch =
+    curationModuleMessageRegistry.toLowerCase() ===
+    messageRegistryAddress.toLowerCase();
+  const messageRegistryMatch =
+    messageRegistryCurationModule.toLowerCase() ===
+    curationModuleAddress.toLowerCase();
+
+  if (!curationModuleMatch || !messageRegistryMatch) {
+    if (isLocalNetwork) {
+      // For local networks, fix the addresses using setter functions
+      console.log("\n🔧 Fixing address mismatch using setter functions...");
+      
+      // Fix CurationModule's MessageRegistry address
+      if (!curationModuleMatch) {
+        console.log(
+          `   Updating CurationModule's MessageRegistry from ${curationModuleMessageRegistry} to ${messageRegistryAddress}...`
+        );
+        const setMsgRegTx = await curationModule.setMessageRegistry(
+          messageRegistryAddress
+        );
+        await setMsgRegTx.wait();
+        console.log("   ✅ CurationModule's MessageRegistry updated");
+      }
+      
+      // Fix MessageRegistry's CurationModule address
+      if (!messageRegistryMatch) {
+        console.log(
+          `   Updating MessageRegistry's CurationModule from ${messageRegistryCurationModule} to ${curationModuleAddress}...`
+        );
+        const setCurationTx = await messageRegistry.setCurationModule(
+          curationModuleAddress
+        );
+        await setCurationTx.wait();
+        console.log("   ✅ MessageRegistry's CurationModule updated");
+      }
+      
+      // Verify addresses are now correct
+      const updatedCurationModuleMessageRegistry = await curationModule.messageRegistry();
+      const updatedMessageRegistryCurationModule = await messageRegistry.curationModule();
+      
+      if (
+        updatedCurationModuleMessageRegistry.toLowerCase() ===
+          messageRegistryAddress.toLowerCase() &&
+        updatedMessageRegistryCurationModule.toLowerCase() ===
+          curationModuleAddress.toLowerCase()
+      ) {
+        console.log("\n   ✅ Address mismatch fixed! Addresses now match correctly!");
+      } else {
+        console.error("\n   ❌ ERROR: Failed to fix address mismatch!");
+        throw new Error("Could not fix address mismatch");
+      }
+    } else {
+      // For testnets, this is an error
+      console.error("\n❌ ERROR: Address mismatch detected!");
+      console.error(
+        `   CurationModule expects MessageRegistry: ${curationModuleMessageRegistry}`
+      );
+      console.error(
+        `   Actual MessageRegistry address: ${messageRegistryAddress}`
+      );
+      console.error(
+        `   MessageRegistry expects CurationModule: ${messageRegistryCurationModule}`
+      );
+      console.error(
+        `   Actual CurationModule address: ${curationModuleAddress}`
+      );
+      throw new Error(
+        "CurationModule and MessageRegistry addresses do not match!"
+      );
+    }
+  } else {
+    console.log("   ✅ CurationModule and MessageRegistry addresses match correctly!");
+  }
+  console.log("");
+
+  console.log("=== Phase 4: Configure Contracts ===\n");
 
   // Set MessageRegistry in TopicVault
-  const stepNum = isLocalNetwork ? "9️⃣" : "7️⃣";
+  const stepNum = isLocalNetwork ? "7️⃣" : "7️⃣";
   console.log(`${stepNum}  Setting MessageRegistry in TopicVault...`);
   const setRegistryTx = await topicVault.setMessageRegistry(
     messageRegistryAddress
@@ -262,7 +339,7 @@ async function main() {
   console.log("   ✅ MessageRegistry set");
 
   // Grant VPToken roles
-  const stepNum2 = isLocalNetwork ? "🔟" : "8️⃣";
+  const stepNum2 = isLocalNetwork ? "8️⃣" : "8️⃣";
   console.log(`${stepNum2}  Granting VPToken roles...`);
   const BURNER_ROLE = await vpToken.BURNER_ROLE();
   const MINTER_ROLE = await vpToken.MINTER_ROLE();
@@ -274,19 +351,19 @@ async function main() {
   await grantBurnerTx.wait();
   console.log("   ✅ BURNER_ROLE granted to TopicFactory");
 
-  const grantVaultBurnerTx = await vpToken.grantRole(
+  const grantMessageRegistryBurnerTx = await vpToken.grantRole(
     BURNER_ROLE,
-    topicVaultAddress
+    messageRegistryAddress
   );
-  await grantVaultBurnerTx.wait();
-  console.log("   ✅ BURNER_ROLE granted to TopicVault (for lockVdot)");
+  await grantMessageRegistryBurnerTx.wait();
+  console.log("   ✅ BURNER_ROLE granted to MessageRegistry (for burning VP)");
 
   const grantMinterTx = await vpToken.grantRole(MINTER_ROLE, topicVaultAddress);
   await grantMinterTx.wait();
   console.log("   ✅ MINTER_ROLE granted to TopicVault");
 
   // Grant TopicFactory roles
-  const stepNum3 = isLocalNetwork ? "1️⃣1️⃣" : "9️⃣";
+  const stepNum3 = isLocalNetwork ? "9️⃣" : "9️⃣";
   console.log(`${stepNum3}  Granting TopicFactory roles...`);
   const OPERATOR_ROLE = await topicFactory.OPERATOR_ROLE();
 
@@ -304,10 +381,10 @@ async function main() {
   await grantOpVaultTx.wait();
   console.log("   ✅ OPERATOR_ROLE granted to TopicVault");
 
-  console.log("\n=== Phase 4: Deploy NFTMinter ===\n");
+  console.log("\n=== Phase 5: Deploy NFTMinter ===\n");
 
   // Deploy NFTMinter
-  const stepNum4 = isLocalNetwork ? "1️⃣2️⃣" : "🔟";
+  const stepNum4 = isLocalNetwork ? "🔟" : "🔟";
   console.log(`${stepNum4}  Deploying NFTMinter...`);
   const NFTMinter = await hre.ethers.getContractFactory("NFTMinter");
   const nftMinter = await NFTMinter.deploy(
@@ -322,7 +399,7 @@ async function main() {
   console.log("   ✅ NFTMinter deployed to:", nftMinterAddress);
 
   // Grant remaining roles
-  const stepNum5 = isLocalNetwork ? "1️⃣3️⃣" : "1️⃣1️⃣";
+  const stepNum5 = isLocalNetwork ? "1️⃣1️⃣" : "1️⃣1️⃣";
   console.log(`${stepNum5}  Granting remaining roles...`);
   const NFT_MINTER_ROLE = await topicFactory.NFT_MINTER_ROLE();
   const grantNftMinterTx = await topicFactory.grantRole(
@@ -332,10 +409,7 @@ async function main() {
   await grantNftMinterTx.wait();
   console.log("   ✅ NFT_MINTER_ROLE granted to NFTMinter");
 
-  const curationModule = await hre.ethers.getContractAt(
-    "CurationModule",
-    curationModuleAddress
-  );
+  // curationModule already defined in verification step above
   const curationOperatorRole = await curationModule.OPERATOR_ROLE();
   const grantCurationOpTx = await curationModule.grantRole(
     curationOperatorRole,

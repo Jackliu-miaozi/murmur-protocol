@@ -129,17 +129,20 @@ contract VPToken is ERC1155, AccessControl, IVPToken {
 
     /**
      * @notice Calculate VP amount from vDOT amount
-     * @param vdotAmount Amount of vDOT
-     * @return vpAmount Amount of VP
-     * @dev VP = 100 * sqrt(vDOT)
+     * @param vdotAmount Amount of vDOT (in wei, 18 decimals)
+     * @return vpAmount Amount of VP (in wei, 18 decimals)
+     * @dev VP = K * sqrt(vDOT), where vDOT is in human-readable units
+     *      For 18 decimal tokens: vpAmount = K * sqrt(vdotAmount) * sqrt(PRECISION)
+     *      Example: 1000 vDOT (10^21 wei) -> 100 * sqrt(1000) = 3162 VP (3.162 * 10^21 wei)
      */
     function calculateVP(uint256 vdotAmount) public pure returns (uint256 vpAmount) {
         if (vdotAmount == 0) return 0;
-        // VP = 100 * sqrt(vDOT)
-        // Using fixed point math: sqrt(vdotAmount * PRECISION) * 100 / sqrt(PRECISION)
-        uint256 sqrtVdot = sqrt(vdotAmount * PRECISION);
+        // VP = K * sqrt(vDOT) where vDOT is in human-readable units
+        // Since vdotAmount is in wei (18 decimals), we need:
+        // vpAmount = K * sqrt(vdotAmount) * sqrt(PRECISION)
+        uint256 sqrtVdot = sqrt(vdotAmount);
         uint256 sqrtPrecision = sqrt(PRECISION);
-        vpAmount = (sqrtVdot * K) / sqrtPrecision;
+        vpAmount = sqrtVdot * K * sqrtPrecision;
     }
 
     /**

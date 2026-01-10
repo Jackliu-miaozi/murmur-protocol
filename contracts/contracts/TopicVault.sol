@@ -9,16 +9,13 @@ import "./interfaces/IVPToken.sol";
 
 /**
  * @title TopicVault
- * @notice Manages topic-scoped VP generation and tracks VP consumption for refunds
+ * @notice Tracks VP consumption per topic for refunds (users now use global VP directly)
  */
 contract TopicVault is AccessControl, ReentrancyGuard, ITopicVault {
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
 
     ITopicFactory public topicFactory;
     IVPToken public vpToken;
-
-    // Topic-scoped VP balances: topicId => user => balance
-    mapping(uint256 => mapping(address => uint256)) public balances;
 
     // Track users who participated in each topic
     mapping(uint256 => address[]) public topicParticipants;
@@ -62,59 +59,36 @@ contract TopicVault is AccessControl, ReentrancyGuard, ITopicVault {
     }
 
     /**
-     * @notice Lock vDOT to get topic-scoped VP
-     * @param topicId Topic ID
-     * @param amount Amount of vDOT (used for VP calculation, not actually locked)
-     * @return vpAmount Amount of topic-scoped VP minted
-     * @dev User must have sufficient global VP balance. Global VP will be burned and converted to topic-scoped VP.
+     * @notice Lock vDOT to get topic-scoped VP (DEPRECATED)
+     * @dev This function is deprecated. Users now use global VP directly from VPToken contract.
+     *      This function is kept for backward compatibility but should not be used.
      */
     function lockVdot(uint256 topicId, uint256 amount) external nonReentrant returns (uint256 vpAmount) {
-        require(amount > 0, "TopicVault: amount must be greater than 0");
-
-        ITopicFactory.Topic memory topic = topicFactory.getTopic(topicId);
-        require(topic.status == ITopicFactory.TopicStatus.Live, "TopicVault: topic not live");
-
-        // Calculate required global VP (based on vDOT amount)
-        uint256 requiredGlobalVP = vpToken.calculateVP(amount);
-
-        // Check and burn global VP
-        require(vpToken.balanceOf(msg.sender) >= requiredGlobalVP, "TopicVault: insufficient global VP");
-        vpToken.burn(msg.sender, requiredGlobalVP);
-
-        // Calculate and allocate topic-scoped VP
-        vpAmount = vpToken.calculateVP(amount);
-        balances[topicId][msg.sender] += vpAmount;
-
-        // Track participation
-        if (!hasParticipated[topicId][msg.sender]) {
-            topicParticipants[topicId].push(msg.sender);
-            hasParticipated[topicId][msg.sender] = true;
-        }
-
-        emit VdotLocked(topicId, msg.sender, amount, vpAmount);
+        revert("TopicVault: lockVdot is deprecated, use global VP directly");
     }
 
     /**
-     * @notice Get topic-scoped VP balance
+     * @notice Get topic-scoped VP balance (DEPRECATED)
+     * @dev Users now use global VP directly. This function always returns 0 for backward compatibility.
      * @param topicId Topic ID
      * @param user User address
-     * @return balance VP balance
+     * @return balance Always returns 0
      */
-    function balanceOf(uint256 topicId, address user) external view returns (uint256 balance) {
-        return balances[topicId][user];
+    function balanceOf(uint256 topicId, address user) external pure returns (uint256 balance) {
+        return 0;
     }
 
     /**
-     * @notice Burn topic-scoped VP (only MessageRegistry can call)
+     * @notice Record VP consumption for a topic (only MessageRegistry can call)
+     * @dev This function tracks VP consumption for refund purposes. VP is burned directly from VPToken.
      * @param topicId Topic ID
-     * @param from Address to burn from
-     * @param amount Amount to burn
+     * @param from Address that consumed VP
+     * @param amount Amount of VP consumed
      */
-    function burn(uint256 topicId, address from, uint256 amount) external {
+    function recordVpConsumption(uint256 topicId, address from, uint256 amount) external {
         require(msg.sender == messageRegistry, "TopicVault: unauthorized");
-        require(balances[topicId][from] >= amount, "TopicVault: insufficient balance");
+        require(amount > 0, "TopicVault: amount must be greater than 0");
         
-        balances[topicId][from] -= amount;
         consumedVP[topicId][from] += amount;
 
         // Track participation for refund
@@ -124,6 +98,15 @@ contract TopicVault is AccessControl, ReentrancyGuard, ITopicVault {
         }
 
         emit VPBurned(topicId, from, amount);
+    }
+
+    /**
+     * @notice Burn topic-scoped VP (DEPRECATED - use recordVpConsumption instead)
+     * @dev This function is kept for backward compatibility but always reverts.
+     *      Use recordVpConsumption() instead.
+     */
+    function burn(uint256 topicId, address from, uint256 amount) external {
+        revert("TopicVault: burn is deprecated, use recordVpConsumption instead");
     }
 
     /**

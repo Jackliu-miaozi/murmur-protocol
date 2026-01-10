@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./interfaces/IMessageRegistry.sol";
 import "./interfaces/ITopicFactory.sol";
 import "./interfaces/ITopicVault.sol";
+import "./interfaces/IVPToken.sol";
 import "./interfaces/IAIScoreVerifier.sol";
 import "./interfaces/ICurationModule.sol";
 
@@ -16,6 +17,7 @@ import "./interfaces/ICurationModule.sol";
 contract MessageRegistry is Ownable, ReentrancyGuard, IMessageRegistry {
     ITopicFactory public topicFactory;
     ITopicVault public topicVault;
+    IVPToken public vpToken;
     IAIScoreVerifier public aiVerifier;
     ICurationModule public curationModule;
 
@@ -43,7 +45,8 @@ contract MessageRegistry is Ownable, ReentrancyGuard, IMessageRegistry {
     uint256 public constant GAMMA = 15 * 1e16; // 0.15
 
     // Rate limiting parameters
-    uint256 public constant MIN_INTERVAL = 15; // 15 seconds
+    // MIN_INTERVAL removed - no minimum interval restriction
+    // uint256 public constant MIN_INTERVAL = 15; // 15 seconds (DISABLED)
     uint256 public constant CONSECUTIVE_COOLDOWN = 3; // Every 3 messages
     uint256 public constant COOLDOWN_MULTIPLIER = 11 * 1e17; // 1.1x
 
@@ -66,23 +69,39 @@ contract MessageRegistry is Ownable, ReentrancyGuard, IMessageRegistry {
         uint256 vpCost
     );
     event MessageLiked(uint256 indexed messageId, address indexed liker, uint256 likeCount);
+    event CurationModuleUpdated(address indexed oldAddress, address indexed newAddress);
 
     constructor(
         address _topicFactory,
         address _topicVault,
+        address _vpToken,
         address _aiVerifier,
         address _curationModule,
         address initialOwner
     ) Ownable(initialOwner) {
         require(_topicFactory != address(0), "MessageRegistry: invalid topic factory");
         require(_topicVault != address(0), "MessageRegistry: invalid topic vault");
+        require(_vpToken != address(0), "MessageRegistry: invalid vp token");
         require(_aiVerifier != address(0), "MessageRegistry: invalid ai verifier");
         require(_curationModule != address(0), "MessageRegistry: invalid curation module");
         
         topicFactory = ITopicFactory(_topicFactory);
         topicVault = ITopicVault(_topicVault);
+        vpToken = IVPToken(_vpToken);
         aiVerifier = IAIScoreVerifier(_aiVerifier);
         curationModule = ICurationModule(_curationModule);
+    }
+
+    /**
+     * @notice Update CurationModule address (only owner can call)
+     * @dev This function is used to fix address mismatch after deployment
+     * @param _curationModule New CurationModule address
+     */
+    function setCurationModule(address _curationModule) external onlyOwner {
+        require(_curationModule != address(0), "MessageRegistry: invalid address");
+        address oldAddress = address(curationModule);
+        curationModule = ICurationModule(_curationModule);
+        emit CurationModuleUpdated(oldAddress, _curationModule);
     }
 
     /**
@@ -122,11 +141,11 @@ contract MessageRegistry is Ownable, ReentrancyGuard, IMessageRegistry {
             "MessageRegistry: invalid AI signature"
         );
 
-        // Rate limiting
-        require(
-            block.timestamp >= lastMessageTime[msg.sender] + MIN_INTERVAL,
-            "MessageRegistry: rate limit exceeded"
-        );
+        // Rate limiting - DISABLED (MIN_INTERVAL check removed)
+        // require(
+        //     block.timestamp >= lastMessageTime[msg.sender] + MIN_INTERVAL,
+        //     "MessageRegistry: rate limit exceeded"
+        // );
 
         // Check consecutive message cooldown
         if (block.timestamp >= lastMessageResetTime[msg.sender] + 3600) {
@@ -143,9 +162,12 @@ contract MessageRegistry is Ownable, ReentrancyGuard, IMessageRegistry {
             baseCost = (baseCost * COOLDOWN_MULTIPLIER) / 1e18;
         }
 
-        // Check and burn VP
-        require(topicVault.balanceOf(topicId, msg.sender) >= baseCost, "MessageRegistry: insufficient VP");
-        topicVault.burn(topicId, msg.sender, baseCost);
+        // Check and burn global VP
+        require(vpToken.balanceOf(msg.sender) >= baseCost, "MessageRegistry: insufficient VP");
+        vpToken.burn(msg.sender, baseCost);
+        
+        // Record VP consumption for refund tracking
+        topicVault.recordVpConsumption(topicId, msg.sender, baseCost);
 
         // Update rate limiting
         lastMessageTime[msg.sender] = block.timestamp;
@@ -202,9 +224,12 @@ contract MessageRegistry is Ownable, ReentrancyGuard, IMessageRegistry {
             "MessageRegistry: topic not live"
         );
 
-        // Check and burn VP for like
-        require(topicVault.balanceOf(topicId, msg.sender) >= LIKE_COST, "MessageRegistry: insufficient VP");
-        topicVault.burn(topicId, msg.sender, LIKE_COST);
+        // Check and burn global VP for like
+        require(vpToken.balanceOf(msg.sender) >= LIKE_COST, "MessageRegistry: insufficient VP");
+        vpToken.burn(msg.sender, LIKE_COST);
+        
+        // Record VP consumption for refund tracking
+        topicVault.recordVpConsumption(topicId, msg.sender, LIKE_COST);
 
         // Update like count
         message_.likeCount++;

@@ -65,6 +65,7 @@ contract DeploymentHelper {
     /**
      * @notice Compute MessageRegistry address using CREATE2
      * @param topicVault TopicVault address
+     * @param vpToken VPToken address
      * @param aiVerifier AIScoreVerifier address
      * @param curationModule CurationModule address
      * @param salt Salt for CREATE2
@@ -72,6 +73,7 @@ contract DeploymentHelper {
      */
     function computeMessageRegistryAddress(
         address topicVault,
+        address vpToken,
         address aiVerifier,
         address curationModule,
         bytes32 salt
@@ -80,6 +82,7 @@ contract DeploymentHelper {
         bytes memory constructorArgs = abi.encode(
             address(topicFactory),
             topicVault,
+            vpToken,
             aiVerifier,
             curationModule,
             owner
@@ -111,6 +114,7 @@ contract DeploymentHelper {
     /**
      * @notice Deploy CurationModule and MessageRegistry atomically
      * @param topicVault TopicVault address
+     * @param vpToken VPToken address
      * @param aiVerifier AIScoreVerifier address
      * @param curationSalt Salt for CurationModule CREATE2
      * @param messageSalt Salt for MessageRegistry CREATE2
@@ -119,6 +123,7 @@ contract DeploymentHelper {
      */
     function deployBoth(
         address topicVault,
+        address vpToken,
         address aiVerifier,
         bytes32 curationSalt,
         bytes32 messageSalt
@@ -153,6 +158,7 @@ contract DeploymentHelper {
             // Compute MessageRegistry with computed CurationModule
             address newMessageRegistry = computeMessageRegistryAddress(
                 topicVault,
+                vpToken,
                 aiVerifier,
                 computedCurationModule,
                 messageSalt
@@ -173,6 +179,7 @@ contract DeploymentHelper {
         );
         address finalMessageRegistry = computeMessageRegistryAddress(
             topicVault,
+            vpToken,
             aiVerifier,
             computedCurationModule,
             messageSalt
@@ -189,6 +196,7 @@ contract DeploymentHelper {
         bytes memory messageRegistryConstructorArgs = abi.encode(
             address(topicFactory),
             topicVault,
+            vpToken,
             aiVerifier,
             computedCurationModule,
             owner

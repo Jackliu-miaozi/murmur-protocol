@@ -315,7 +315,7 @@ Cost = Base(H) * Intensity(S) * Length(L)
 - `P = 2`: 幂次
 - `GAMMA = 0.15`: 长度系数
 - `LIKE_COST = 1 * 1e18`: 点赞成本（1 VP）
-- `MIN_INTERVAL = 15`: 最小发布间隔（秒）
+- `MIN_INTERVAL`: 已移除（不再限制最小发布间隔）
 - `CONSECUTIVE_COOLDOWN = 3`: 连续发布冷却阈值
 - `COOLDOWN_MULTIPLIER = 1.1x`: 冷却倍数
 

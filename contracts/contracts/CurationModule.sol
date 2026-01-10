@@ -31,6 +31,7 @@ contract CurationModule is AccessControl, ICurationModule {
     event CuratedMessageAdded(uint256 indexed topicId, uint256 indexed messageId);
     event CuratedMessageRemoved(uint256 indexed topicId, uint256 indexed messageId);
     event CuratedMessagesFinalized(uint256 indexed topicId);
+    event MessageRegistryUpdated(address indexed oldAddress, address indexed newAddress);
 
     constructor(
         address _topicFactory,
@@ -181,6 +182,18 @@ contract CurationModule is AccessControl, ICurationModule {
     function curatedSetHash(uint256 topicId) external view returns (bytes32 hash) {
         uint256[] memory messageIds = curatedMessages[topicId];
         return keccak256(abi.encodePacked(messageIds));
+    }
+
+    /**
+     * @notice Update MessageRegistry address (only DEFAULT_ADMIN_ROLE can call)
+     * @dev This function is used to fix address mismatch after deployment
+     * @param _messageRegistry New MessageRegistry address
+     */
+    function setMessageRegistry(address _messageRegistry) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(_messageRegistry != address(0), "CurationModule: invalid address");
+        address oldAddress = address(messageRegistry);
+        messageRegistry = IMessageRegistry(_messageRegistry);
+        emit MessageRegistryUpdated(oldAddress, _messageRegistry);
     }
 
     /**
