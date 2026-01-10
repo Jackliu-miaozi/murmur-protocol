@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+build/
+out/
+contracts/artifacts/
+contracts/artifacts-pvm/
+contracts/cache/
+contracts/cache-pvm/
+contracts/typechain-types/
+contracts/typechain/
+contracts/bin/
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Lock files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Logs
+*.log
+
+# Environment files
+.env
+.env.*
+
+# Binary files
+*.wasm
+*.o
+*.so
+*.dylib
+*.dll
+*.exe

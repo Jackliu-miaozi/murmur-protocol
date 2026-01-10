@@ -34,7 +34,10 @@ node/
 *.env
 
 # IDE / Editor
-.vscode/
+# Allow shared VSCode settings, but ignore user-specific files
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
 .idea/
 *.swp
 *.swo
