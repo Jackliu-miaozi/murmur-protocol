@@ -58,4 +58,18 @@ interface ITopicFactory {
      * @param topicId Topic ID
      */
     function closeTopic(uint256 topicId) external;
+
+    /**
+     * @notice Check and close topic if expired
+     * @param topicId Topic ID
+     * @return closed True if topic was closed
+     */
+    function checkAndCloseTopic(uint256 topicId) external returns (bool closed);
+
+    /**
+     * @notice Check if user can redeem
+     * @param user User address
+     * @return canRedeem True if can redeem
+     */
+    function canUserRedeem(address user) external view returns (bool canRedeem);
 }

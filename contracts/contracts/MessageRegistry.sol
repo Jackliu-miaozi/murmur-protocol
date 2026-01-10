@@ -26,22 +26,26 @@ contract MessageRegistry is Ownable, ReentrancyGuard, IMessageRegistry {
     // Topic message IDs
     mapping(uint256 => uint256[]) public topicMessages;
 
+    // Track user's messages per topic
+    mapping(uint256 => mapping(address => uint256[])) public userTopicMessages;
+    mapping(uint256 => mapping(address => bool)) public hasPostedInTopic;
+
     // Rate limiting: user => last message timestamp
     mapping(address => uint256) public lastMessageTime;
     mapping(address => uint256) public consecutiveMessageCount;
     mapping(address => uint256) public lastMessageResetTime;
 
-    // Cost calculation parameters
+    // Cost calculation parameters (scaled to 1e18)
     uint256 public constant C0 = 10 * 1e18; // Base cost: 10 VP
-    uint256 public constant BETA = 25 * 1e16; // 0.25 (scaled to 1e18)
-    uint256 public constant ALPHA = 2 * 1e18; // 2.0 (scaled to 1e18)
-    uint256 public constant P = 2 * 1e18; // 2.0 (scaled to 1e18)
-    uint256 public constant GAMMA = 15 * 1e16; // 0.15 (scaled to 1e18)
+    uint256 public constant BETA = 25 * 1e16; // 0.25
+    uint256 public constant ALPHA = 2 * 1e18; // 2.0
+    uint256 public constant P = 2; // Power (not scaled, used as exponent)
+    uint256 public constant GAMMA = 15 * 1e16; // 0.15
 
     // Rate limiting parameters
     uint256 public constant MIN_INTERVAL = 15; // 15 seconds
     uint256 public constant CONSECUTIVE_COOLDOWN = 3; // Every 3 messages
-    uint256 public constant COOLDOWN_MULTIPLIER = 11 * 1e17; // 1.1x (scaled to 1e18)
+    uint256 public constant COOLDOWN_MULTIPLIER = 11 * 1e17; // 1.1x
 
     // Like cost
     uint256 public constant LIKE_COST = 1 * 1e18; // 1 VP
@@ -70,6 +74,11 @@ contract MessageRegistry is Ownable, ReentrancyGuard, IMessageRegistry {
         address _curationModule,
         address initialOwner
     ) Ownable(initialOwner) {
+        require(_topicFactory != address(0), "MessageRegistry: invalid topic factory");
+        require(_topicVault != address(0), "MessageRegistry: invalid topic vault");
+        require(_aiVerifier != address(0), "MessageRegistry: invalid ai verifier");
+        require(_curationModule != address(0), "MessageRegistry: invalid curation module");
+        
         topicFactory = ITopicFactory(_topicFactory);
         topicVault = ITopicVault(_topicVault);
         aiVerifier = IAIScoreVerifier(_aiVerifier);
@@ -94,10 +103,18 @@ contract MessageRegistry is Ownable, ReentrancyGuard, IMessageRegistry {
         uint256 timestamp,
         bytes memory signature
     ) external nonReentrant returns (uint256 messageId) {
-        // Check topic status and auto-close if expired
+        require(contentHash != bytes32(0), "MessageRegistry: invalid content hash");
+        require(length > 0, "MessageRegistry: invalid length");
+
+        // Check topic status first
         ITopicFactory.Topic memory topic = topicFactory.getTopic(topicId);
         require(topic.status == ITopicFactory.TopicStatus.Live, "MessageRegistry: topic not live");
-        topicFactory.checkAndCloseTopic(topicId);
+
+        // Check if topic should be closed
+        if (topicFactory.isExpired(topicId)) {
+            topicFactory.checkAndCloseTopic(topicId);
+            revert("MessageRegistry: topic has expired");
+        }
 
         // Verify AI signature
         require(
@@ -149,6 +166,8 @@ contract MessageRegistry is Ownable, ReentrancyGuard, IMessageRegistry {
         });
 
         topicMessages[topicId].push(messageId);
+        userTopicMessages[topicId][msg.sender].push(messageId);
+        hasPostedInTopic[topicId][msg.sender] = true;
 
         // Update topic statistics
         topicMessageCount[topicId]++;
@@ -163,8 +182,8 @@ contract MessageRegistry is Ownable, ReentrancyGuard, IMessageRegistry {
 
         emit MessagePosted(messageId, topicId, msg.sender, contentHash, baseCost);
 
-        // Trigger curation update
-        curationModule.onLike(topicId, messageId);
+        // Trigger curation update (for new messages with 0 likes)
+        curationModule.onMessagePosted(topicId, messageId);
     }
 
     /**
@@ -173,9 +192,9 @@ contract MessageRegistry is Ownable, ReentrancyGuard, IMessageRegistry {
      * @param messageId Message ID
      */
     function likeMessage(uint256 topicId, uint256 messageId) external nonReentrant {
-        Message storage message = messages[messageId];
-        require(message.messageId != 0, "MessageRegistry: message not found");
-        require(message.topicId == topicId, "MessageRegistry: topic mismatch");
+        Message storage message_ = messages[messageId];
+        require(message_.messageId != 0, "MessageRegistry: message not found");
+        require(message_.topicId == topicId, "MessageRegistry: topic mismatch");
 
         ITopicFactory.Topic memory topic = topicFactory.getTopic(topicId);
         require(
@@ -188,14 +207,24 @@ contract MessageRegistry is Ownable, ReentrancyGuard, IMessageRegistry {
         topicVault.burn(topicId, msg.sender, LIKE_COST);
 
         // Update like count
-        message.likeCount++;
+        message_.likeCount++;
         topicLikeCount[topicId]++;
         topicVpBurned[topicId] += LIKE_COST;
 
-        emit MessageLiked(messageId, msg.sender, message.likeCount);
+        emit MessageLiked(messageId, msg.sender, message_.likeCount);
 
         // Trigger curation update
         curationModule.onLike(topicId, messageId);
+    }
+
+    /**
+     * @notice Check if user has posted in topic
+     * @param topicId Topic ID
+     * @param user User address
+     * @return hasPosted True if user has posted
+     */
+    function hasUserPostedInTopic(uint256 topicId, address user) external view returns (bool hasPosted) {
+        return hasPostedInTopic[topicId][user];
     }
 
     /**
@@ -217,7 +246,7 @@ contract MessageRegistry is Ownable, ReentrancyGuard, IMessageRegistry {
         uint256 base = (C0 * (1e18 + (BETA * heat) / 1e18)) / 1e18;
 
         // Intensity(S) = 1 + alpha * S^p
-        // S is already scaled to 1e18, so S^p = (S * S) / 1e18 for p=2
+        // S is scaled to 1e18, so S^2 = (S * S) / 1e18
         uint256 sSquared = (aiScore * aiScore) / 1e18;
         uint256 intensity = 1e18 + (ALPHA * sSquared) / 1e18;
 
@@ -225,7 +254,8 @@ contract MessageRegistry is Ownable, ReentrancyGuard, IMessageRegistry {
         uint256 lengthTerm = 1e18 + (GAMMA * logApprox(1 + length)) / 1e18;
 
         // Cost = Base * Intensity * Length
-        cost = (base * intensity * lengthTerm) / (1e18 * 1e18);
+        cost = (base * intensity) / 1e18;
+        cost = (cost * lengthTerm) / 1e18;
     }
 
     /**
@@ -234,37 +264,42 @@ contract MessageRegistry is Ownable, ReentrancyGuard, IMessageRegistry {
      * @return heat Heat value (scaled to 1e18)
      */
     function calculateHeat(uint256 topicId) public view returns (uint256 heat) {
-        uint256 elapsed = block.timestamp - topicStartTime[topicId];
+        uint256 startTime = topicStartTime[topicId];
+        if (startTime == 0) return 0;
+        
+        uint256 elapsed = block.timestamp - startTime;
         if (elapsed == 0) return 0;
 
-        // Message rate (messages per second)
+        // Message rate (messages per second, scaled to 1e18)
         uint256 msgRate = (topicMessageCount[topicId] * 1e18) / elapsed;
 
-        // Like rate (likes per second)
+        // Like rate (likes per second, scaled to 1e18)
         uint256 likeRate = (topicLikeCount[topicId] * 1e18) / elapsed;
 
-        // VP burn rate (VP per second)
-        uint256 vpBurnRate = (topicVpBurned[topicId] * 1e18) / elapsed;
+        // VP burn rate (VP per second, scaled)
+        uint256 vpBurnRate = topicVpBurned[topicId] / elapsed;
 
         // Heat = w1*log(1+msg_rate) + w2*log(1+unique_users) + w3*log(1+like_rate) + w4*log(1+vp_burn_rate)
-        // Using equal weights for simplicity
-        uint256 w = 1e18 / 4; // Each weight is 0.25
+        // Using equal weights for simplicity (0.25 each)
+        uint256 w = 25 * 1e16; // 0.25
 
-        heat =
-            (w * logApprox(1e18 + msgRate)) / 1e18 +
-            (w * logApprox(1e18 + topicUniqueUserCount[topicId] * 1e18)) / 1e18 +
-            (w * logApprox(1e18 + likeRate)) / 1e18 +
-            (w * logApprox(1e18 + vpBurnRate)) / 1e18;
+        // Scale inputs for log function (need values >= 1)
+        uint256 logMsgRate = logApprox(1 + msgRate / 1e18);
+        uint256 logUsers = logApprox(1 + topicUniqueUserCount[topicId]);
+        uint256 logLikeRate = logApprox(1 + likeRate / 1e18);
+        uint256 logVpRate = logApprox(1 + vpBurnRate / 1e18);
+
+        heat = (w * logMsgRate + w * logUsers + w * logLikeRate + w * logVpRate) / 1e18;
     }
 
     /**
      * @notice Get message information
      * @param messageId Message ID
-     * @return message Message struct
+     * @return message_ Message struct
      */
-    function getMessage(uint256 messageId) external view returns (Message memory message) {
-        message = messages[messageId];
-        require(message.messageId != 0, "MessageRegistry: message not found");
+    function getMessage(uint256 messageId) external view returns (Message memory message_) {
+        message_ = messages[messageId];
+        require(message_.messageId != 0, "MessageRegistry: message not found");
     }
 
     /**
@@ -306,32 +341,23 @@ contract MessageRegistry is Ownable, ReentrancyGuard, IMessageRegistry {
     }
 
     /**
-     * @notice Logarithm approximation
+     * @notice Logarithm approximation (natural log)
+     * @param x Input value (must be >= 1)
+     * @return result Log result (scaled to 1e18)
      */
     function logApprox(uint256 x) internal pure returns (uint256 result) {
-        require(x > 0, "MessageRegistry: log of zero");
-        if (x == 1e18) return 0;
+        if (x <= 1) return 0;
 
-        // Simple approximation for log(1+x) where x is scaled to 1e18
-        if (x < 1e18) {
-            // log(1+x) ≈ x - x^2/2 for small x
-            uint256 xMinusOne = x - 1e18;
-            uint256 xSquared = (xMinusOne * xMinusOne) / 1e18;
-            result = xMinusOne - xSquared / 2;
-        } else {
-            // For larger values, use iterative method
-            uint256 n = 0;
-            uint256 y = x;
-            while (y >= 2 * 1e18) {
-                y = y / 2;
-                n++;
-            }
-            uint256 log2 = 693147000000000000; // log(2) * 1e18
-            result = n * log2;
-            if (y > 1e18) {
-                uint256 term = ((y - 1e18) * 1e18) / y;
-                result += term;
-            }
+        // For x >= 2, use iterative method
+        uint256 n = 0;
+        uint256 y = x;
+        while (y >= 2) {
+            y = y / 2;
+            n++;
         }
+        // log(x) = n * log(2)
+        // log(2) ≈ 0.693147
+        uint256 log2 = 693147000000000000; // 0.693147 * 1e18
+        result = n * log2;
     }
 }

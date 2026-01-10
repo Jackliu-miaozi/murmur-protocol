@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./interfaces/ITopicFactory.sol";
 import "./interfaces/IVPToken.sol";
@@ -10,7 +10,10 @@ import "./interfaces/IVPToken.sol";
  * @title TopicFactory
  * @notice Manages topic creation, lifecycle, and state transitions
  */
-contract TopicFactory is Ownable, ReentrancyGuard, ITopicFactory {
+contract TopicFactory is AccessControl, ReentrancyGuard, ITopicFactory {
+    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+    bytes32 public constant NFT_MINTER_ROLE = keccak256("NFT_MINTER_ROLE");
+
     IVPToken public vpToken;
 
     // Topic counter
@@ -29,6 +32,9 @@ contract TopicFactory is Ownable, ReentrancyGuard, ITopicFactory {
     // Track user's participated topics
     mapping(address => uint256[]) public userTopics;
 
+    // Track user participation in each topic
+    mapping(uint256 => mapping(address => bool)) public userParticipated;
+
     event TopicCreated(
         uint256 indexed topicId,
         address indexed creator,
@@ -41,9 +47,16 @@ contract TopicFactory is Ownable, ReentrancyGuard, ITopicFactory {
     event TopicMinted(uint256 indexed topicId);
     event TopicSettled(uint256 indexed topicId);
     event CreationCostUpdated(uint256 baseCost, uint256 alpha);
+    event UserJoinedTopic(uint256 indexed topicId, address indexed user);
 
-    constructor(address _vpToken, address initialOwner) Ownable(initialOwner) {
+    constructor(address _vpToken, address initialOwner) {
+        require(_vpToken != address(0), "TopicFactory: invalid vp token");
+        require(initialOwner != address(0), "TopicFactory: invalid owner");
+        
         vpToken = IVPToken(_vpToken);
+        
+        _grantRole(DEFAULT_ADMIN_ROLE, initialOwner);
+        _grantRole(OPERATOR_ROLE, initialOwner);
     }
 
     /**
@@ -60,9 +73,10 @@ contract TopicFactory is Ownable, ReentrancyGuard, ITopicFactory {
         uint256 freezeWindow_,
         uint256 curatedLimit_
     ) external nonReentrant returns (uint256 topicId) {
+        require(metadataHash != bytes32(0), "TopicFactory: invalid metadata hash");
         require(topicDuration_ > 0, "TopicFactory: invalid duration");
         require(freezeWindow_ < topicDuration_, "TopicFactory: invalid freeze window");
-        require(curatedLimit_ > 0, "TopicFactory: invalid curated limit");
+        require(curatedLimit_ > 0 && curatedLimit_ <= 100, "TopicFactory: invalid curated limit");
 
         // Calculate creation cost
         uint256 cost = quoteCreationCost();
@@ -86,7 +100,7 @@ contract TopicFactory is Ownable, ReentrancyGuard, ITopicFactory {
         });
 
         // Track user's topics
-        userTopics[msg.sender].push(topicId);
+        _addUserToTopic(topicId, msg.sender);
 
         // Update active count
         activeTopicCount++;
@@ -95,12 +109,24 @@ contract TopicFactory is Ownable, ReentrancyGuard, ITopicFactory {
     }
 
     /**
+     * @notice Add user to topic participation list
+     * @param topicId Topic ID
+     * @param user User address
+     */
+    function _addUserToTopic(uint256 topicId, address user) internal {
+        if (!userParticipated[topicId][user]) {
+            userParticipated[topicId][user] = true;
+            userTopics[user].push(topicId);
+            emit UserJoinedTopic(topicId, user);
+        }
+    }
+
+    /**
      * @notice Quote creation cost
      * @return cost Creation cost in VP
      */
     function quoteCreationCost() public view returns (uint256 cost) {
         // cost = baseCost * (1 + alpha * log(1 + activeTopicCount))
-        // Using fixed point math
         if (activeTopicCount == 0) {
             return baseCreationCost;
         }
@@ -124,9 +150,9 @@ contract TopicFactory is Ownable, ReentrancyGuard, ITopicFactory {
     /**
      * @notice Check if topic is frozen (in freeze window)
      * @param topicId Topic ID
-     * @return isFrozen True if frozen
+     * @return frozen True if frozen
      */
-    function isFrozen(uint256 topicId) public view returns (bool isFrozen) {
+    function isFrozen(uint256 topicId) public view returns (bool frozen) {
         Topic memory topic = topics[topicId];
         require(topic.topicId != 0, "TopicFactory: topic not found");
 
@@ -136,15 +162,15 @@ contract TopicFactory is Ownable, ReentrancyGuard, ITopicFactory {
 
         uint256 elapsed = block.timestamp - topic.createdAt;
         uint256 freezeStart = topic.duration - topic.freezeWindow;
-        isFrozen = (elapsed >= freezeStart);
+        frozen = (elapsed >= freezeStart);
     }
 
     /**
      * @notice Check if topic is expired
      * @param topicId Topic ID
-     * @return isExpired True if expired
+     * @return expired True if expired
      */
-    function isExpired(uint256 topicId) public view returns (bool isExpired) {
+    function isExpired(uint256 topicId) public view returns (bool expired) {
         Topic memory topic = topics[topicId];
         require(topic.topicId != 0, "TopicFactory: topic not found");
 
@@ -153,27 +179,33 @@ contract TopicFactory is Ownable, ReentrancyGuard, ITopicFactory {
         }
 
         uint256 elapsed = block.timestamp - topic.createdAt;
-        isExpired = (elapsed >= topic.duration);
+        expired = (elapsed >= topic.duration);
     }
 
     /**
-     * @notice Check and close topic if expired (called by MessageRegistry)
+     * @notice Check and close topic if expired
      * @param topicId Topic ID
+     * @return closed True if topic was closed
      */
-    function checkAndCloseTopic(uint256 topicId) external {
+    function checkAndCloseTopic(uint256 topicId) external returns (bool closed) {
         Topic storage topic = topics[topicId];
         require(topic.topicId != 0, "TopicFactory: topic not found");
-        require(topic.status == TopicStatus.Live, "TopicFactory: topic not live");
+        
+        if (topic.status != TopicStatus.Live) {
+            return false;
+        }
 
         if (isExpired(topicId)) {
             topic.status = TopicStatus.Closed;
             activeTopicCount--;
             emit TopicClosed(topicId);
+            return true;
         }
+        return false;
     }
 
     /**
-     * @notice Close topic manually (for backend service)
+     * @notice Close topic manually (for backend service or admin)
      * @param topicId Topic ID
      */
     function closeTopic(uint256 topicId) external {
@@ -188,10 +220,10 @@ contract TopicFactory is Ownable, ReentrancyGuard, ITopicFactory {
     }
 
     /**
-     * @notice Mark topic as minted
+     * @notice Mark topic as minted (only NFTMinter can call)
      * @param topicId Topic ID
      */
-    function markMinted(uint256 topicId) external {
+    function markMinted(uint256 topicId) external onlyRole(NFT_MINTER_ROLE) {
         Topic storage topic = topics[topicId];
         require(topic.topicId != 0, "TopicFactory: topic not found");
         require(topic.status == TopicStatus.Closed, "TopicFactory: topic not closed");
@@ -203,23 +235,14 @@ contract TopicFactory is Ownable, ReentrancyGuard, ITopicFactory {
     }
 
     /**
-     * @notice Get user's participated topics
-     * @param user User address
-     * @return topicIds Array of topic IDs
-     */
-    function getUserTopics(address user) external view returns (uint256[] memory topicIds) {
-        return userTopics[user];
-    }
-
-    /**
      * @notice Check if user can redeem (all topics are closed/minted/settled)
      * @param user User address
      * @return canRedeem True if can redeem
      */
     function canUserRedeem(address user) external view returns (bool canRedeem) {
-        uint256[] memory topics_ = userTopics[user];
-        for (uint256 i = 0; i < topics_.length; i++) {
-            Topic memory topic = topics[topics_[i]];
+        uint256[] memory userTopicIds = userTopics[user];
+        for (uint256 i = 0; i < userTopicIds.length; i++) {
+            Topic memory topic = topics[userTopicIds[i]];
             if (topic.status == TopicStatus.Live) {
                 return false;
             }
@@ -232,7 +255,7 @@ contract TopicFactory is Ownable, ReentrancyGuard, ITopicFactory {
      * @param _baseCost Base creation cost
      * @param _alpha Alpha coefficient
      */
-    function updateCreationCost(uint256 _baseCost, uint256 _alpha) external onlyOwner {
+    function updateCreationCost(uint256 _baseCost, uint256 _alpha) external onlyRole(DEFAULT_ADMIN_ROLE) {
         baseCreationCost = _baseCost;
         alpha = _alpha;
         emit CreationCostUpdated(_baseCost, _alpha);
@@ -240,21 +263,14 @@ contract TopicFactory is Ownable, ReentrancyGuard, ITopicFactory {
 
     /**
      * @notice Logarithm approximation (natural log)
-     * @param x Input value
+     * @param x Input value (must be >= 1)
      * @return result Logarithm result (scaled to 1e18)
      */
     function logApprox(uint256 x) internal pure returns (uint256 result) {
-        require(x > 0, "TopicFactory: log of zero");
-        // Simple approximation: log(x) ≈ (x - 1) / x for x close to 1
-        // Better: use Taylor series or lookup table
-        // For simplicity, using: log(1+x) ≈ x - x^2/2 + x^3/3 - ...
+        require(x >= 1, "TopicFactory: log input must be >= 1");
         if (x == 1) return 0;
-        if (x < 1) {
-            // log(x) = -log(1/x)
-            return 1e18 - logApprox((1e18 * 1e18) / x);
-        }
 
-        // For x > 1, use approximation
+        // For x >= 2, use iterative method
         uint256 n = 0;
         uint256 y = x;
         while (y >= 2) {
@@ -265,9 +281,12 @@ contract TopicFactory is Ownable, ReentrancyGuard, ITopicFactory {
         // log(2) ≈ 0.693147
         uint256 log2 = 693147000000000000; // 0.693147 * 1e18
         result = n * log2;
+        
+        // For remaining y in [1, 2), use approximation log(y) ≈ (y-1) - (y-1)^2/2
         if (y > 1) {
-            uint256 term = ((y - 1e18) * 1e18) / y;
-            result += term;
+            // Since we're using integers, y is always >= 1
+            // y is effectively x / 2^n, so we estimate the fractional part
+            result += (x * 1e18 / (1 << n)) - 1e18;
         }
     }
 }

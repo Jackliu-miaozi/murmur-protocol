@@ -44,4 +44,12 @@ interface IMessageRegistry {
         uint256 offset,
         uint256 limit
     ) external view returns (Message[] memory messages);
+
+    /**
+     * @notice Check if user has posted in topic
+     * @param topicId Topic ID
+     * @param user User address
+     * @return hasPosted True if user has posted
+     */
+    function hasUserPostedInTopic(uint256 topicId, address user) external view returns (bool hasPosted);
 }

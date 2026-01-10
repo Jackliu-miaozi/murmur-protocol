@@ -1,0 +1,124 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Hardhat / Solidity
+contracts/artifacts/
+contracts/artifacts-pvm/
+contracts/cache/
+contracts/cache-pvm/
+contracts/coverage/
+contracts/coverage.json
+contracts/typechain-types/
+contracts/typechain/
+contracts/.openzeppelin/
+contracts/.solhint.json
+contracts/hardhat-gas-reporter-output.json
+contracts/ignition/deployments/
+
+# Rust / Cargo
+# Note: node/ directory contains Polkadot SDK as embedded git repo
+# Should be added as submodule if needed
+node/
+# node/target/
+# **/target/
+# Cargo.lock
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.test
+*.env
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+.project
+.classpath
+.settings/
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+pnpm-debug.log*
+
+# Build outputs
+dist/
+build/
+out/
+*.o
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Binary files (contracts/bin contains compiled binaries)
+contracts/bin/*
+
+# Test coverage
+coverage/
+*.lcov
+.nyc_output/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Package manager locks (uncomment if needed)
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# Hardhat specific
+.hardhat/
+hardhat.config.local.js
+
+# Polkadot/Substrate specific
+*.wasm
+*.compact.wasm
+*.prdoc
+
+# Secrets and keys
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+.secrets/
+
+# Deployment artifacts
+deployments/
+.openzeppelin/
+
+# Misc
+*.zip
+*.tar.gz
+*.rar
+.cache/

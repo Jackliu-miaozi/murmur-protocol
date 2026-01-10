@@ -9,8 +9,8 @@ interface ITopicVault {
     /**
      * @notice Lock vDOT to get topic-scoped VP
      * @param topicId Topic ID
-     * @param amount Amount of vDOT (not actually locked, just for VP calculation)
-     * @return vpAmount Amount of VP minted
+     * @param amount Amount of vDOT (used for VP calculation, not actually locked)
+     * @return vpAmount Amount of topic-scoped VP minted
      */
     function lockVdot(uint256 topicId, uint256 amount) external returns (uint256 vpAmount);
 
@@ -41,4 +41,10 @@ interface ITopicVault {
      * @notice Redeem vDOT (requires all topics user participated in are closed)
      */
     function redeemVdot() external;
+
+    /**
+     * @notice Refund VP to all participants for a topic
+     * @param topicId Topic ID
+     */
+    function refundVPForTopic(uint256 topicId) external;
 }

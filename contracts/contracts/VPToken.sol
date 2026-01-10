@@ -2,8 +2,9 @@
 pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./interfaces/IVPToken.sol";
 
 /**
@@ -11,7 +12,13 @@ import "./interfaces/IVPToken.sol";
  * @notice Global VP Token contract - ERC-1155 token for Voice Points
  * @dev Users stake vDOT to get VP, which can be used across all topics
  */
-contract VPToken is ERC1155, Ownable, IVPToken {
+contract VPToken is ERC1155, AccessControl, IVPToken {
+    using SafeERC20 for IERC20;
+
+    // Roles
+    bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
+    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
+
     // vDOT token address
     IERC20 public immutable vdotToken;
 
@@ -29,11 +36,19 @@ contract VPToken is ERC1155, Ownable, IVPToken {
     uint256 private constant VP_TOKEN_ID = 0;
 
     event VdotStaked(address indexed user, uint256 vdotAmount, uint256 vpAmount);
+    event VdotWithdrawn(address indexed user, uint256 amount);
     event VPBurned(address indexed user, uint256 amount);
     event VPMinted(address indexed user, uint256 amount);
 
-    constructor(address _vdotToken, address initialOwner) ERC1155("") Ownable(initialOwner) {
+    constructor(address _vdotToken, address initialOwner) ERC1155("") {
+        require(_vdotToken != address(0), "VPToken: invalid vdot address");
+        require(initialOwner != address(0), "VPToken: invalid owner address");
+        
         vdotToken = IERC20(_vdotToken);
+        
+        _grantRole(DEFAULT_ADMIN_ROLE, initialOwner);
+        _grantRole(BURNER_ROLE, initialOwner);
+        _grantRole(MINTER_ROLE, initialOwner);
     }
 
     /**
@@ -44,8 +59,8 @@ contract VPToken is ERC1155, Ownable, IVPToken {
     function stakeVdot(uint256 amount) external returns (uint256 vpAmount) {
         require(amount > 0, "VPToken: amount must be greater than 0");
 
-        // Transfer vDOT from user
-        vdotToken.transferFrom(msg.sender, address(this), amount);
+        // Transfer vDOT from user using SafeERC20
+        vdotToken.safeTransferFrom(msg.sender, address(this), amount);
 
         // Calculate VP: VP = 100 * sqrt(vDOT)
         vpAmount = calculateVP(amount);
@@ -61,6 +76,22 @@ contract VPToken is ERC1155, Ownable, IVPToken {
     }
 
     /**
+     * @notice Withdraw staked vDOT
+     * @param amount Amount to withdraw
+     */
+    function withdrawVdot(uint256 amount) external {
+        require(amount > 0, "VPToken: amount must be greater than 0");
+        require(stakedVdot[msg.sender] >= amount, "VPToken: insufficient staked balance");
+
+        stakedVdot[msg.sender] -= amount;
+        totalStakedVdot -= amount;
+
+        vdotToken.safeTransfer(msg.sender, amount);
+
+        emit VdotWithdrawn(msg.sender, amount);
+    }
+
+    /**
      * @notice Get VP balance for a user
      * @param user User address
      * @return balance VP balance
@@ -70,25 +101,28 @@ contract VPToken is ERC1155, Ownable, IVPToken {
     }
 
     /**
-     * @notice Burn VP tokens
+     * @notice Burn VP tokens (can be called by BURNER_ROLE or token owner)
      * @param from Address to burn from
      * @param amount Amount to burn
      */
     function burn(address from, uint256 amount) external {
         require(
-            from == msg.sender || isApprovedForAll(from, msg.sender),
-            "VPToken: caller is not owner nor approved"
+            from == msg.sender || 
+            isApprovedForAll(from, msg.sender) ||
+            hasRole(BURNER_ROLE, msg.sender),
+            "VPToken: caller is not owner nor approved nor burner"
         );
         _burn(from, VP_TOKEN_ID, amount);
         emit VPBurned(from, amount);
     }
 
     /**
-     * @notice Mint VP tokens (for refund)
+     * @notice Mint VP tokens (for refund, only MINTER_ROLE)
      * @param to Address to mint to
      * @param amount Amount to mint
      */
-    function mint(address to, uint256 amount) external onlyOwner {
+    function mint(address to, uint256 amount) external onlyRole(MINTER_ROLE) {
+        require(to != address(0), "VPToken: mint to zero address");
         _mint(to, VP_TOKEN_ID, amount, "");
         emit VPMinted(to, amount);
     }
@@ -100,34 +134,45 @@ contract VPToken is ERC1155, Ownable, IVPToken {
      * @dev VP = 100 * sqrt(vDOT)
      */
     function calculateVP(uint256 vdotAmount) public pure returns (uint256 vpAmount) {
+        if (vdotAmount == 0) return 0;
         // VP = 100 * sqrt(vDOT)
         // Using fixed point math: sqrt(vdotAmount * PRECISION) * 100 / sqrt(PRECISION)
         uint256 sqrtVdot = sqrt(vdotAmount * PRECISION);
-        vpAmount = (sqrtVdot * K) / sqrt(PRECISION);
+        uint256 sqrtPrecision = sqrt(PRECISION);
+        vpAmount = (sqrtVdot * K) / sqrtPrecision;
     }
 
     /**
      * @notice Calculate square root using Babylonian method
      * @param x Input value
-     * @return sqrt Square root
+     * @return y Square root
      */
-    function sqrt(uint256 x) internal pure returns (uint256 sqrt) {
+    function sqrt(uint256 x) internal pure returns (uint256 y) {
         if (x == 0) return 0;
         uint256 z = (x + 1) / 2;
-        uint256 y = x;
+        y = x;
         while (z < y) {
             y = z;
             z = (x / z + z) / 2;
         }
-        return y;
     }
 
     /**
-     * @notice Withdraw vDOT (only owner, for emergency)
+     * @notice Emergency withdraw vDOT (only admin)
      * @param to Recipient address
      * @param amount Amount to withdraw
      */
-    function withdrawVdot(address to, uint256 amount) external onlyOwner {
-        vdotToken.transfer(to, amount);
+    function emergencyWithdraw(address to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(to != address(0), "VPToken: invalid recipient");
+        require(vdotToken.balanceOf(address(this)) >= amount, "VPToken: insufficient balance");
+        vdotToken.safeTransfer(to, amount);
+        emit VdotWithdrawn(to, amount);
+    }
+
+    /**
+     * @notice Check if contract supports interface
+     */
+    function supportsInterface(bytes4 interfaceId) public view virtual override(ERC1155, AccessControl) returns (bool) {
+        return super.supportsInterface(interfaceId);
     }
 }

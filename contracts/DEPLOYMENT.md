@@ -4,7 +4,7 @@
 
 Murmur Protocol 由以下核心合约组成：
 
-1. **VPToken.sol** - 全局 VP Token 管理（ERC-1155）
+1. **VPToken.sol** - 全局 VP Token 管理（ERC-1155 + AccessControl）
 2. **TopicFactory.sol** - Topic 创建和生命周期管理
 3. **TopicVault.sol** - Topic-scoped VP 生成和管理
 4. **AIScoreVerifier.sol** - AI 签名验证
@@ -21,7 +21,7 @@ Murmur Protocol 由以下核心合约组成：
 VPToken(vdotTokenAddress, initialOwner)
 ```
 - `vdotTokenAddress`: vDOT ERC-20 代币地址
-- `initialOwner`: 合约所有者地址
+- `initialOwner`: 合约所有者地址（会获得 DEFAULT_ADMIN_ROLE, BURNER_ROLE, MINTER_ROLE）
 
 ### 2. 部署 AIScoreVerifier
 ```solidity
@@ -41,51 +41,123 @@ TopicFactory(vpTokenAddress, initialOwner)
 ```solidity
 TopicVault(topicFactoryAddress, vpTokenAddress, initialOwner)
 ```
-- `topicFactoryAddress`: TopicFactory 合约地址
-- `vpTokenAddress`: VPToken 合约地址
-- `initialOwner`: 合约所有者地址
 
 ### 5. 部署 CurationModule
 ```solidity
-CurationModule(topicFactoryAddress, messageRegistryAddress, topicVaultAddress, initialOwner)
+CurationModule(topicFactoryAddress, messageRegistryAddress, initialOwner)
 ```
-- `topicFactoryAddress`: TopicFactory 合约地址
-- `messageRegistryAddress`: MessageRegistry 合约地址（先部署，但需要后续配置）
-- `topicVaultAddress`: TopicVault 合约地址
-- `initialOwner`: 合约所有者地址
+**注意**: 需要先部署 MessageRegistry 获取地址
 
 ### 6. 部署 MessageRegistry
 ```solidity
 MessageRegistry(topicFactoryAddress, topicVaultAddress, aiVerifierAddress, curationModuleAddress, initialOwner)
 ```
-- `topicFactoryAddress`: TopicFactory 合约地址
-- `topicVaultAddress`: TopicVault 合约地址
-- `aiVerifierAddress`: AIScoreVerifier 合约地址
-- `curationModuleAddress`: CurationModule 合约地址
-- `initialOwner`: 合约所有者地址
 
 ### 7. 部署 NFTMinter
 ```solidity
-NFTMinter(topicFactoryAddress, curationModuleAddress, messageRegistryAddress, topicVaultAddress, vpTokenAddress, initialOwner)
+NFTMinter(topicFactoryAddress, curationModuleAddress, messageRegistryAddress, topicVaultAddress, initialOwner)
 ```
-- `topicFactoryAddress`: TopicFactory 合约地址
-- `curationModuleAddress`: CurationModule 合约地址
-- `messageRegistryAddress`: MessageRegistry 合约地址
-- `topicVaultAddress`: TopicVault 合约地址
-- `vpTokenAddress`: VPToken 合约地址
-- `initialOwner`: 合约所有者地址
 
 ## 部署后配置
 
-### 1. 配置 TopicVault
-```solidity
-topicVault.setMessageRegistry(messageRegistryAddress)
-```
-允许 MessageRegistry 调用 TopicVault 的 burn 函数。
+### 必须执行的配置步骤
 
-### 2. 配置 VPToken（如果需要）
 ```solidity
-vpToken.setApprovalForAll(topicFactoryAddress, true) // 用户操作
+// 1. 配置 TopicVault - 设置 MessageRegistry 地址
+topicVault.setMessageRegistry(messageRegistryAddress);
+
+// 2. 配置 VPToken - 授予 TopicFactory BURNER_ROLE
+vpToken.grantRole(BURNER_ROLE, topicFactoryAddress);
+
+// 3. 配置 VPToken - 授予 TopicVault MINTER_ROLE (用于 VP 返还)
+vpToken.grantRole(MINTER_ROLE, topicVaultAddress);
+
+// 4. 配置 TopicFactory - 授予 NFTMinter NFT_MINTER_ROLE
+topicFactory.grantRole(NFT_MINTER_ROLE, nftMinterAddress);
+
+// 5. 配置 TopicFactory - 授予 MessageRegistry 和 TopicVault OPERATOR_ROLE
+topicFactory.grantRole(OPERATOR_ROLE, messageRegistryAddress);
+topicFactory.grantRole(OPERATOR_ROLE, topicVaultAddress);
+
+// 6. 配置 CurationModule - 授予 NFTMinter OPERATOR_ROLE
+curationModule.grantRole(OPERATOR_ROLE, nftMinterAddress);
+
+// 7. 配置 TopicVault - 授予 NFTMinter OPERATOR_ROLE (用于 VP 返还)
+topicVault.grantRole(OPERATOR_ROLE, nftMinterAddress);
+```
+
+## 使用场景验证
+
+### 第1步：创建议题
+```solidity
+// Alice 质押 vDOT 获得 VP
+vdotToken.approve(vpTokenAddress, 1000e18);
+vpToken.stakeVdot(1000e18); // 获得约 3162 VP
+
+// 查询创建费用
+uint256 cost = topicFactory.quoteCreationCost();
+
+// 创建议题
+uint256 topicId = topicFactory.createTopic(
+    metadataHash,
+    86400,  // 24 hours
+    600,    // 10 minutes freeze
+    50      // curated limit
+);
+```
+
+### 第2步：用户参与讨论
+```solidity
+// Bob 锁定 vDOT 获得 topic VP
+uint256 vpAmount = topicVault.lockVdot(topicId, 1000e18);
+
+// 发布消息
+uint256 messageId = messageRegistry.postMessage(
+    topicId,
+    contentHash,
+    length,
+    aiScore,
+    timestamp,
+    signature
+);
+```
+
+### 第3步：点赞与精选
+```solidity
+// Charlie 点赞
+messageRegistry.likeMessage(topicId, messageId);
+// 系统自动更新精选区
+```
+
+### 第4步：冻结窗口
+```solidity
+// 检查是否进入冻结
+bool isFrozen = topicFactory.isFrozen(topicId);
+// 冻结后精选区不再更新
+```
+
+### 第5步：议题结束
+```solidity
+// 关闭议题
+topicFactory.closeTopic(topicId);
+// 或自动检查关闭
+topicFactory.checkAndCloseTopic(topicId);
+```
+
+### 第6步：铸造 NFT
+```solidity
+// 任何发过言的用户都可以铸造
+uint256 tokenId = nftMinter.mintNfts(topicId);
+// 系统自动：标记已铸造、返还 VP
+```
+
+### 第7步：赎回 vDOT
+```solidity
+// 检查是否可以赎回
+bool canRedeem = topicVault.canRedeem(userAddress);
+
+// 赎回 vDOT
+vpToken.withdrawVdot(amount);
 ```
 
 ## 合约参数
@@ -102,52 +174,32 @@ vpToken.setApprovalForAll(topicFactoryAddress, true) // 用户操作
 - `C0 = 10 * 1e18`: 基础发言成本（10 VP）
 - `BETA = 0.25`: 热度系数
 - `ALPHA = 2.0`: 强度系数
-- `P = 2.0`: 强度指数
+- `P = 2`: 强度指数
 - `GAMMA = 0.15`: 长度系数
 - `MIN_INTERVAL = 15`: 最小发消息间隔（秒）
 - `CONSECUTIVE_COOLDOWN = 3`: 连续发送冷却阈值
 - `COOLDOWN_MULTIPLIER = 1.1x`: 冷却倍数
 - `LIKE_COST = 1 * 1e18`: 点赞成本（1 VP）
 
-## 测试建议
+### AIScoreVerifier
+- `signatureValidityWindow = 600`: 签名有效窗口（10分钟）
+- `fallbackModeEnabled = false`: 降级模式
+- `defaultScore = 0.5`: 默认分数
 
-1. **单元测试**：测试每个合约的核心功能
-2. **集成测试**：测试合约之间的交互
-3. **端到端测试**：测试完整的用户流程
-4. **Gas 优化测试**：确保合约 gas 消耗合理
+## 安全说明
 
-## 安全注意事项
+所有合约使用 OpenZeppelin 的 AccessControl 进行权限管理：
+- `DEFAULT_ADMIN_ROLE`: 最高权限，可以管理其他角色
+- `OPERATOR_ROLE`: 操作权限，用于合约间调用
+- `BURNER_ROLE`: VP 销毁权限
+- `MINTER_ROLE`: VP 铸造权限
+- `NFT_MINTER_ROLE`: NFT 铸造权限
 
-1. **访问控制**：确保所有 onlyOwner 函数有适当的访问控制
-2. **重入攻击**：使用 ReentrancyGuard 保护关键函数
-3. **整数溢出**：Solidity 0.8+ 自动检查
-4. **签名验证**：确保 AI 签名验证逻辑正确
-5. **状态机**：确保 Topic 状态转换正确
+## 测试
 
-## 网络配置
-
-### Polkadot Asset Hub (EVM)
-- 网络 ID: 根据实际配置
-- Chain ID: 根据实际配置
-- Gas Limit: 根据实际需求调整
-
-## 升级策略
-
-当前合约未实现可升级模式。如需升级，考虑：
-1. 使用 OpenZeppelin Upgradeable 合约
-2. 实现代理模式（TransparentProxy 或 UUPS）
-3. 数据迁移策略
-
-## 监控和事件
-
-所有关键操作都发出事件，建议监控：
-- Topic 创建和状态变化
-- 消息发布和点赞
-- VP 消耗和返还
-- NFT 铸造
-
-## 支持
-
-如有问题，请参考：
-- [白皮书](../../docs/whitepaper.md)
-- [使用场景文档](../../docs/useway.md)
+```bash
+cd contracts
+npm install
+npx hardhat compile
+npx hardhat test
+```
