@@ -33,13 +33,13 @@ async function retryTransaction(fn, maxRetries = 3, delayMs = 2000) {
 
 // Contract addresses from latest deployment (update these if needed)
 const CONTRACT_ADDRESSES = {
-  VPToken: "0xC1123cA6E07dD41123926866Ec72dbAF7be9D487",
-  AIScoreVerifier: "0x348D63E8C09505b89a6a663396f35B3498B0f988",
-  TopicFactory: "0x7151EE65408f3A7fD2A58BCA0A13832833BFf5eE",
-  TopicVault: "0xc8ddD10a9E9bAFA6aD58C5fbaFEB65E8a48b21Ff",
-  CurationModule: "0xE805F44d96C023fba9a9cc40dd1e95Dcabe11E5c",
-  MessageRegistry: "0xDf62d18AFA1A804601b72d49aDC6Ed4fb336a672",
-  NFTMinter: "0xCa1f095c1C45E211443D953c581f2Cc169050197",
+  VPToken: "0xF0e46847c8bFD122C4b5EEE1D4494FF7C5FC5104",
+  AIScoreVerifier: "0xb91C2eeaA0c475115069a6ED4bc601337a22788E",
+  TopicFactory: "0xD45E290062Bd0D1C640D59C350cA03CC291b37FA",
+  TopicVault: "0x115f277e8fcE437B1F513A293057D2E396Ac2EC1",
+  CurationModule: "0xC530e4cD4933357da902577E78cC7C65C5759e0C",
+  MessageRegistry: "0x07aa061c3d7E291348Ea2Df3C33ccFe61c926AcB",
+  NFTMinter: "0x6CAa59f27B0b3b5Adc07a2b3EcB7142B3C74f424",
   VDOTToken:
     process.env.VDOT_TOKEN || "0x0000000000000000000000000000000000000000", // Will be auto-detected or set via env var
 };
