@@ -3,15 +3,15 @@
 
 export const CONTRACTS = {
   VDOTToken: "0x85b108660f47caDfAB9e0503104C08C1c96e0DA9" as `0x${string}`,
-  VPToken: "0xF0e46847c8bFD122C4b5EEE1D4494FF7C5FC5104" as `0x${string}`,
-  TopicFactory: "0xD45E290062Bd0D1C640D59C350cA03CC291b37FA" as `0x${string}`,
+  VPToken: "0x3ed62137c5DB927cb137c26455969116BF0c23Cb" as `0x${string}`,
+  TopicFactory: "0x21cb3940e6Ba5284E1750F1109131a8E8062b9f1" as `0x${string}`,
   MessageRegistry:
-    "0x07aa061c3d7E291348Ea2Df3C33ccFe61c926AcB" as `0x${string}`,
-  CurationModule: "0xC530e4cD4933357da902577E78cC7C65C5759e0C" as `0x${string}`,
-  NFTMinter: "0x6CAa59f27B0b3b5Adc07a2b3EcB7142B3C74f424" as `0x${string}`,
-  TopicVault: "0x115f277e8fcE437B1F513A293057D2E396Ac2EC1" as `0x${string}`,
+    "0x527FC4060Ac7Bf9Cd19608EDEeE8f09063A16cd4" as `0x${string}`,
+  CurationModule: "0xb6F2B9415fc599130084b7F20B84738aCBB15930" as `0x${string}`,
+  NFTMinter: "0x1377Ce7BadadB01a2D06Dc41f31e8B57d9882888" as `0x${string}`,
+  TopicVault: "0x7d4567B7257cf869B01a47E8cf0EDB3814bDb963" as `0x${string}`,
   AIScoreVerifier:
-    "0xb91C2eeaA0c475115069a6ED4bc601337a22788E" as `0x${string}`,
+    "0x5CC307268a1393AB9A764A20DACE848AB8275c46" as `0x${string}`,
 } as const;
 
 // Helper function to update contract addresses (for development)

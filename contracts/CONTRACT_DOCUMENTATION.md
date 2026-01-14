@@ -11,7 +11,9 @@
 5. [MessageRegistry](#messageregistry)
 6. [CurationModule](#curationmodule)
 7. [NFTMinter](#nftminter)
-8. [DeploymentHelper](#deploymenthelper)
+8. [AIScoreVerifier](#aiscoreverifier)
+9. [DeploymentHelper](#deploymenthelper)
+10. [MurmurProtocol](#murmurprotocol)
 
 ---
 
@@ -512,6 +514,83 @@ NFT 被铸造时触发
 
 ---
 
+## AIScoreVerifier
+
+### 功能描述
+验证 AI 服务对消息强度分数的签名。使用 EIP-712 标准进行签名验证，确保消息的 AI 强度分数来自可信的 AI 服务。
+
+### 签名验证流程
+1. AI 服务计算消息的强度分数（0-1，缩放至 1e18）
+2. AI 服务使用私钥对以下数据进行签名：
+   - `contentHash`: 消息内容哈希
+   - `length`: 消息长度
+   - `aiScore`: AI 强度分数
+   - `timestamp`: 时间戳
+3. 合约验证签名是否来自授权的验证者地址
+4. 检查时间戳是否在有效窗口内（默认 10 分钟）
+
+### EIP-712 类型哈希
+```
+AIScore(bytes32 contentHash,uint256 length,uint256 aiScore,uint256 timestamp)
+```
+
+### 配置参数
+- `signatureValidityWindow`: 签名有效期窗口（默认 600 秒，即 10 分钟）
+- `fallbackModeEnabled`: 是否启用回退模式（当 AI 服务不可用时）
+- `defaultScore`: 回退模式下的默认分数（默认 0.5，即 5e17）
+
+### 事件
+
+#### `VerifierUpdated(address indexed oldVerifier, address indexed newVerifier)`
+验证者地址更新时触发
+- `oldVerifier`: 旧验证者地址
+- `newVerifier`: 新验证者地址
+
+#### `ValidityWindowUpdated(uint256 oldWindow, uint256 newWindow)`
+签名有效期窗口更新时触发
+- `oldWindow`: 旧窗口时间（秒）
+- `newWindow`: 新窗口时间（秒）
+
+#### `FallbackModeUpdated(bool enabled, uint256 defaultScore)`
+回退模式更新时触发
+- `enabled`: 是否启用回退模式
+- `defaultScore`: 默认分数
+
+### 函数
+
+#### `verifyScore(bytes32 contentHash, uint256 length, uint256 aiScore, uint256 timestamp, bytes memory signature) external view returns (bool isValid)`
+验证 AI 签名
+- `contentHash`: 消息内容哈希
+- `length`: 消息长度
+- `aiScore`: AI 强度分数（0-1，缩放至 1e18）
+- `timestamp`: 时间戳
+- `signature`: AI 服务签名
+- 返回：签名是否有效
+- 说明：
+  - 如果启用回退模式且未提供签名，则检查分数是否等于默认分数
+  - 验证时间戳是否在有效窗口内
+  - 使用 EIP-712 标准验证签名
+
+#### `setVerifier(address _verifier) external onlyOwner`
+设置 AI 验证者地址
+- `_verifier`: 验证者地址
+- 说明：只有合约所有者可以调用
+
+#### `setValidityWindow(uint256 _window) external onlyOwner`
+设置签名有效期窗口
+- `_window`: 窗口时间（秒，60-3600）
+- 说明：只有合约所有者可以调用
+
+#### `setFallbackMode(bool _enabled, uint256 _defaultScore) external onlyOwner`
+启用/禁用回退模式
+- `_enabled`: 是否启用回退模式
+- `_defaultScore`: 默认分数（0-1e18）
+- 说明：
+  - 当回退模式启用时，如果未提供签名，将使用默认分数
+  - 只有合约所有者可以调用
+
+---
+
 ## DeploymentHelper
 
 ### 功能描述
@@ -551,6 +630,30 @@ MessageRegistry 部署时触发
 - `messageSalt`: MessageRegistry 的 CREATE2 盐值
 - 返回：部署的 CurationModule 和 MessageRegistry 地址
 - 说明：使用迭代方法计算地址直到收敛，然后部署两个合约
+
+---
+
+## MurmurProtocol
+
+### 功能描述
+主部署合约，用于设置所有协议组件。这是一个部署辅助合约，帮助记录和跟踪协议部署状态。
+
+### 事件
+
+#### `ProtocolDeployed(address vpToken, address topicFactory, address topicVault, address aiVerifier, address messageRegistry, address curationModule, address nftMinter)`
+协议部署完成时触发
+- `vpToken`: VPToken 合约地址
+- `topicFactory`: TopicFactory 合约地址
+- `topicVault`: TopicVault 合约地址
+- `aiVerifier`: AIScoreVerifier 合约地址
+- `messageRegistry`: MessageRegistry 合约地址
+- `curationModule`: CurationModule 合约地址
+- `nftMinter`: NFTMinter 合约地址
+
+### 说明
+- 此合约主要用于部署辅助和状态记录
+- 在生产环境中，建议使用工厂模式或部署脚本进行部署
+- 合约本身不包含业务逻辑，仅作为部署流程的辅助工具
 
 ---
 

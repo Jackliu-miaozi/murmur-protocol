@@ -105,7 +105,11 @@ export default function AssetsPage() {
           <Card variant="gradient" className="text-center">
             <p className="text-sm text-gray-400">vDOT Balance</p>
             <p className="mt-2 text-3xl font-bold text-white">
-              {vdotLoading ? "..." : Number(vdotBalance).toFixed(2)}
+              {vdotLoading
+                ? "..."
+                : isNaN(Number(vdotBalance))
+                ? "0.00"
+                : Number(vdotBalance).toFixed(2)}
             </p>
             <p className="mt-1 text-sm text-gray-500">Available to stake</p>
           </Card>
@@ -113,7 +117,11 @@ export default function AssetsPage() {
           <Card variant="gradient" className="text-center">
             <p className="text-sm text-gray-400">Staked vDOT</p>
             <p className="mt-2 text-3xl font-bold text-purple-400">
-              {vpLoading ? "..." : Number(stakedVdot).toFixed(2)}
+              {vpLoading
+                ? "..."
+                : isNaN(Number(stakedVdot))
+                ? "0.00"
+                : Number(stakedVdot).toFixed(2)}
             </p>
             <p className="mt-1 text-sm text-gray-500">Locked in VPToken</p>
           </Card>
@@ -121,7 +129,11 @@ export default function AssetsPage() {
           <Card variant="gradient" className="text-center">
             <p className="text-sm text-gray-400">VP Balance</p>
             <p className="mt-2 text-3xl font-bold text-green-400">
-              {vpLoading ? "..." : Number(vpBalance).toFixed(2)}
+              {vpLoading
+                ? "..."
+                : isNaN(Number(vpBalance))
+                ? "0.00"
+                : Number(vpBalance).toFixed(2)}
             </p>
             <p className="mt-1 text-sm text-gray-500">Voice Points</p>
           </Card>
