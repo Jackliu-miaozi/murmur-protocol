@@ -40,9 +40,15 @@ contract VPToken is ERC1155, AccessControl, EIP712, IVPToken {
   // Batch operation nonce (prevents replay attacks)
   uint256 public override batchNonce;
 
+  // User-specific nonce for withdrawals (prevents replay attacks)
+  mapping(address => uint256) public userNonce;
+
   // EIP-712 type hashes
   bytes32 private constant BATCH_BURN_TYPEHASH =
     keccak256("BatchBurn(address[] users,uint256[] amounts,uint256 nonce)");
+
+  bytes32 private constant BATCH_MINT_TYPEHASH =
+    keccak256("BatchMint(address[] users,uint256[] amounts,uint256 nonce)");
 
   // New: Withdrawal Request TypeHash
   bytes32 private constant WITHDRAW_TYPEHASH =
@@ -120,6 +126,7 @@ contract VPToken is ERC1155, AccessControl, EIP712, IVPToken {
       balanceOf(msg.sender, VP_TOKEN_ID) >= vpBurnAmount,
       "VP: insufficient VP"
     );
+    require(nonce == userNonce[msg.sender], "VP: invalid nonce");
 
     // Verify signature
     bytes32 structHash = keccak256(
@@ -129,14 +136,8 @@ contract VPToken is ERC1155, AccessControl, EIP712, IVPToken {
     address signer = digest.recover(signature);
     require(hasRole(OPERATOR_ROLE, signer), "VP: invalid signature");
 
-    // Check nonce mapping?
-    // For simplicity in V2, we might want a user-specific nonce or just rely on the fact
-    // that if the backend issues it, it's valid.
-    // However, to prevent replay, we need to track nonces.
-    // Since this is a single user action, we can't use the global batchNonce.
-    // We should add a mapping(address => uint256) public userNonce;
-
-    // NOTE: userNonce logic will be added below.
+    // Increment nonce
+    userNonce[msg.sender]++;
 
     // Update state
     stakedVdot[msg.sender] -= vdotReturn;
@@ -218,10 +219,7 @@ contract VPToken is ERC1155, AccessControl, EIP712, IVPToken {
     // Verify signature
     bytes32 structHash = keccak256(
       abi.encode(
-        // We need to re-verify if BATCH_MINT_TYPEHASH exists since we removed it in previous step?
-        // Wait, I should double check if I removed it. The previous tool call output showed it.
-        // I will assume it is BATCH_MINT_TYPEHASH and define it properly if missed.
-        keccak256("BatchMint(address[] users,uint256[] amounts,uint256 nonce)"),
+        BATCH_MINT_TYPEHASH,
         keccak256(abi.encodePacked(users)),
         keccak256(abi.encodePacked(amounts)),
         nonce
@@ -237,7 +235,7 @@ contract VPToken is ERC1155, AccessControl, EIP712, IVPToken {
     // Execute mints
     uint256 totalAmount = 0;
     for (uint256 i = 0; i < users.length; i++) {
-      if (amounts[i] > 0) {
+// ... existing code ...      if (amounts[i] > 0) {
         _mint(users[i], VP_TOKEN_ID, amounts[i], "");
         totalAmount += amounts[i];
         emit VPMinted(users[i], amounts[i]);
