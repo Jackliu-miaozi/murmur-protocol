@@ -235,7 +235,7 @@ contract VPToken is ERC1155, AccessControl, EIP712, IVPToken {
     // Execute mints
     uint256 totalAmount = 0;
     for (uint256 i = 0; i < users.length; i++) {
-// ... existing code ...      if (amounts[i] > 0) {
+      if (amounts[i] > 0) {
         _mint(users[i], VP_TOKEN_ID, amounts[i], "");
         totalAmount += amounts[i];
         emit VPMinted(users[i], amounts[i]);
