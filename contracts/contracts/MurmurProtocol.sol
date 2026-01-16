@@ -3,20 +3,28 @@ pragma solidity ^0.8.20;
 
 /**
  * @title MurmurProtocol
- * @notice Main deployment contract that sets up all protocol components
- * @dev This contract helps with deployment and initialization
+ * @notice Protocol registry for V2 minimal architecture
+ * @dev Only 3 core contracts: VDOTToken, VPToken, MurmurNFT
  */
 contract MurmurProtocol {
-    // This contract serves as a deployment helper
-    // In production, use a proper factory pattern or deployment script
-    
-    event ProtocolDeployed(
-        address vpToken,
-        address topicFactory,
-        address topicVault,
-        address aiVerifier,
-        address messageRegistry,
-        address curationModule,
-        address nftMinter
-    );
+  // V2 Minimal Architecture - only 3 contracts
+  // All other logic (topics, messages, curation) is handled off-chain
+
+  event ProtocolDeployed(
+    address indexed vdotToken,
+    address indexed vpToken,
+    address indexed murmurNFT
+  );
+
+  address public vdotToken;
+  address public vpToken;
+  address public murmurNFT;
+
+  constructor(address _vdotToken, address _vpToken, address _murmurNFT) {
+    vdotToken = _vdotToken;
+    vpToken = _vpToken;
+    murmurNFT = _murmurNFT;
+
+    emit ProtocolDeployed(_vdotToken, _vpToken, _murmurNFT);
+  }
 }

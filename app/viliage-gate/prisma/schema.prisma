@@ -1,0 +1,245 @@
+// Murmur Protocol - Prisma Schema for Supabase (Prisma 7 format)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================
+// Topic - 议题表
+// ============================================
+model Topic {
+  id            Int           @id @default(autoincrement())
+  title         String        @db.VarChar(200)
+  description   String        @db.Text
+  metadataHash  String        @db.VarChar(66) // 0x + 64 hex chars
+  creator       String        @db.VarChar(42) // Ethereum address
+  createdAt     DateTime      @default(now())
+  duration      Int           // Duration in seconds
+  freezeWindow  Int           // Freeze window in seconds
+  curatedLimit  Int           @default(50)
+  status        TopicStatus   @default(LIVE)
+  messageCount  Int           @default(0)
+  uniqueUsers   Int           @default(0)
+
+  // Relations
+  messages      Message[]
+  vpConsumptions VpConsumption[]
+  curatedList   CuratedList[]
+
+  @@index([status])
+  @@index([creator])
+  @@index([createdAt])
+}
+
+enum TopicStatus {
+  LIVE
+  FROZEN
+  CLOSED
+  MINTED
+}
+
+// ============================================
+// Message - 消息表
+// ============================================
+model Message {
+  id            Int           @id @default(autoincrement())
+  topicId       Int
+  author        String        @db.VarChar(42) // Ethereum address
+  content       String        @db.Text
+  contentHash   String        @db.VarChar(66)
+  length        Int
+  aiScore       Float         @default(0.5)
+  vpCost        Float         @default(0)
+  likeCount     Int           @default(0)
+  createdAt     DateTime      @default(now())
+
+  // Relations
+  topic         Topic         @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  curatedEntry  CuratedList?
+  likes         Like[]
+
+  @@index([topicId])
+  @@index([author])
+  @@index([likeCount])
+  @@index([topicId, likeCount])
+}
+
+// ============================================
+// VpConsumption - VP 消耗流水表
+// ============================================
+model VpConsumption {
+  id            Int           @id @default(autoincrement())
+  topicId       Int
+  userAddress   String        @db.VarChar(42)
+  amount        Decimal       @db.Decimal(78, 0) // Support uint256
+  action        VpAction
+  settled       Boolean       @default(false)
+  settlementId  Int?
+  createdAt     DateTime      @default(now())
+
+  // Relations
+  topic         Topic         @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  settlement    Settlement?   @relation(fields: [settlementId], references: [id])
+  user          User          @relation(fields: [userAddress], references: [address])
+
+  @@index([settled])
+  @@index([userAddress])
+  @@index([topicId, userAddress])
+}
+
+enum VpAction {
+  MESSAGE
+  LIKE
+  CREATE_TOPIC
+}
+
+// ============================================
+// Settlement - 结算批次表
+// ============================================
+model Settlement {
+  id            Int           @id @default(autoincrement())
+  nonce         Int           @unique
+  type          SettlementType
+  txHash        String?       @db.VarChar(66)
+  status        SettlementStatus @default(PENDING)
+  createdAt     DateTime      @default(now())
+  confirmedAt   DateTime?
+
+  // Relations
+  consumptions  VpConsumption[]
+
+  @@index([status])
+}
+
+enum SettlementType {
+  BATCH_BURN
+  BATCH_MINT
+}
+
+enum SettlementStatus {
+  PENDING
+  SUBMITTED
+  CONFIRMED
+  FAILED
+}
+
+// ============================================
+// CuratedList - 精选列表
+// ============================================
+model CuratedList {
+  id            Int           @id @default(autoincrement())
+  topicId       Int
+  messageId     Int           @unique
+  rank          Int
+
+  // Relations
+  topic         Topic         @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  message       Message       @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([topicId, rank])
+  @@index([topicId])
+}
+
+// ============================================
+// MintedNFT - 已铸造 NFT 记录
+// ============================================
+model MintedNFT {
+  id            Int           @id @default(autoincrement())
+  topicId       Int           @unique
+  tokenId       Int
+  topicHash     String        @db.VarChar(66)
+  curatedHash   String        @db.VarChar(66)
+  minter        String        @db.VarChar(42)
+  txHash        String?       @db.VarChar(66)
+  mintedAt      DateTime      @default(now())
+
+  @@index([minter])
+}
+
+// ============================================
+// User - 用户核心表 (Energy Tank)
+// ============================================
+model User {
+  address       String    @id @db.VarChar(42)
+  vdotBalance   Decimal   @default(0) @db.Decimal(78, 0) // On-chain staked vDOT sync
+  vpBalance     Decimal   @default(0) @db.Decimal(78, 0) // Off-chain current VP (Energy)
+  maxVp         Decimal   @default(0) @db.Decimal(78, 0) // Calculated Cap (100 * sqrt(vdot))
+  lastRespiration DateTime @default(now())               // Last time respiration was calculated
+
+  // Relations
+  likes         Like[]
+  consumptions  VpConsumption[]
+  rewards       VpReward[]
+  withdrawals   WithdrawalRequest[]
+
+  @@index([vpBalance])
+}
+
+// ============================================
+// Like - 点赞关联表 (Merit System)
+// ============================================
+model Like {
+  id        Int      @id @default(autoincrement())
+  messageId Int
+  userId    String   @db.VarChar(42)
+  vpReward  Decimal  @default(0) @db.Decimal(78, 0) // Amount of VP rewarded to author
+  createdAt DateTime @default(now())
+
+  // Relations
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [address])
+
+  @@unique([messageId, userId]) // Prevent double liking
+}
+
+// ============================================
+// VpReward - VP 奖励记录 (Resonance)
+// ============================================
+model VpReward {
+  id            Int           @id @default(autoincrement())
+  userAddress   String        @db.VarChar(42)
+  amount        Decimal       @db.Decimal(78, 0)
+  source        RewardSource
+  referenceId   String?       @db.VarChar(100) // TopicID or MessageID
+  processed     Boolean       @default(false)  // Included in settlement calc?
+  createdAt     DateTime      @default(now())
+
+  // Relations
+  user          User          @relation(fields: [userAddress], references: [address])
+
+  @@index([userAddress, processed])
+}
+
+enum RewardSource {
+  LIKE_EARNED
+  CURATED_BONUS
+  SYSTEM_ADJUSTMENT
+}
+
+// ============================================
+// WithdrawalRequest - 离场/提现请求
+// ============================================
+model WithdrawalRequest {
+  id            Int               @id @default(autoincrement())
+  userAddress   String            @db.VarChar(42)
+  vpBurnAmount  Decimal           @db.Decimal(78, 0)
+  vdotReturn    Decimal           @db.Decimal(78, 0)
+  signature     String            @db.Text
+  nonce         Int               @unique
+  status        WithdrawalStatus  @default(PENDING)
+  txHash        String?           @db.VarChar(66)
+  createdAt     DateTime          @default(now())
+  
+  // Relations
+  user          User              @relation(fields: [userAddress], references: [address])
+}
+
+enum WithdrawalStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
