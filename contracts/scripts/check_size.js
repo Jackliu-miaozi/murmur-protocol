@@ -4,27 +4,36 @@ const path = require("path");
 async function main() {
   const contractsDir = path.join(__dirname, "../artifacts-pvm/contracts");
 
-  // Helper to verify directory exists
   if (!fs.existsSync(contractsDir)) {
     console.log(
-      `Artifacts directory not found at ${contractsDir}. Please run 'npx hardhat compile' first.`
+      `Artifacts directory not found. Please run 'npx hardhat compile' first.`
     );
     return;
   }
 
   const contracts = [
-    { name: "VPToken", file: "VPToken.sol" },
-    { name: "VPTokenLite", file: "VPTokenLite.sol" },
-    { name: "VPTokenUltra", file: "VPTokenUltra.sol" },
-    { name: "MurmurNFT", file: "MurmurNFT.sol" },
-    { name: "MurmurNFTLite", file: "MurmurNFTLite.sol" },
-    { name: "MurmurNFTUltra", file: "MurmurNFTUltra.sol" },
-    { name: "MurmurProtocol", file: "MurmurProtocol.sol" },
-    { name: "VDOTToken", file: "VDOTToken.sol" },
+    // Core
+    { name: "RouterProxy", file: "core/RouterProxy.sol" },
+    { name: "MurmurProtocol", file: "core/MurmurProtocol.sol" },
+    { name: "VDOTToken", file: "core/VDOTToken.sol" },
+
+    // VP Modules
+    { name: "VPStaking", file: "modules/vp/VPStaking.sol" },
+    { name: "VPWithdraw", file: "modules/vp/VPWithdraw.sol" },
+    { name: "VPSettlement", file: "modules/vp/VPSettlement.sol" },
+    { name: "VPAdmin", file: "modules/vp/VPAdmin.sol" },
+
+    // NFT Modules
+    { name: "NFTMint", file: "modules/nft/NFTMint.sol" },
+    { name: "NFTQuery", file: "modules/nft/NFTQuery.sol" },
+    { name: "NFTAdmin", file: "modules/nft/NFTAdmin.sol" },
   ];
 
-  console.log("Contract Size Check:");
-  console.log("---------------------");
+  console.log("Contract Size Check (Router Proxy Pattern):");
+  console.log("============================================\n");
+
+  let total = 0;
+  let allUnder24KB = true;
 
   for (const c of contracts) {
     const artifactPath = path.join(contractsDir, c.file, `${c.name}.json`);
@@ -33,18 +42,28 @@ async function main() {
       const bytecode = artifact.deployedBytecode;
       if (bytecode && bytecode !== "0x") {
         const size = (bytecode.length - 2) / 2;
-        const sizeInKb = (size / 1024).toFixed(3);
-        console.log(`${c.name}: ${size} bytes (${sizeInKb} KB)`);
-        if (size > 24576) {
-          console.log(`  ⚠️ WARN: Exceeds Spurious Dragon limit (24KB)`);
-        }
-      } else {
-        console.log(`${c.name}: No bytecode found (interface or abstract?)`);
+        const sizeInKb = (size / 1024).toFixed(2);
+        const status = size > 24576 ? "⚠️" : "✅";
+        if (size > 24576) allUnder24KB = false;
+        console.log(
+          `${status} ${c.name.padEnd(20)} ${sizeInKb.padStart(8)} KB`
+        );
+        total += size;
       }
     } else {
-      console.log(`${c.name}: Artifact not found at ${artifactPath}`);
+      console.log(`❌ ${c.name}: Not found`);
     }
   }
+
+  console.log("\n============================================");
+  console.log(`Total: ${(total / 1024).toFixed(2)} KB`);
+  console.log(
+    `Status: ${
+      allUnder24KB
+        ? "✅ All contracts < 24KB!"
+        : "⚠️ Some contracts exceed 24KB"
+    }`
+  );
 }
 
 main();
