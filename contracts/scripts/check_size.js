@@ -15,8 +15,10 @@ async function main() {
   const contracts = [
     { name: "VPToken", file: "VPToken.sol" },
     { name: "VPTokenLite", file: "VPTokenLite.sol" },
+    { name: "VPTokenUltra", file: "VPTokenUltra.sol" },
     { name: "MurmurNFT", file: "MurmurNFT.sol" },
     { name: "MurmurNFTLite", file: "MurmurNFTLite.sol" },
+    { name: "MurmurNFTUltra", file: "MurmurNFTUltra.sol" },
     { name: "MurmurProtocol", file: "MurmurProtocol.sol" },
     { name: "VDOTToken", file: "VDOTToken.sol" },
   ];
