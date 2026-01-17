@@ -1,32 +1,48 @@
 const fs = require("fs");
 const path = require("path");
 
-const artifactPath =
-  "/Users/jackliu/Documents/murmur-protocol/murmur-protocol/contracts/artifacts-pvm/contracts/VPToken.sol/VPToken.json";
+async function main() {
+  const contractsDir = path.join(__dirname, "../artifacts-pvm/contracts");
 
-try {
-  const artifact = JSON.parse(fs.readFileSync(artifactPath, "utf8"));
-  const bytecode = artifact.deployedBytecode;
-
-  if (!bytecode) {
-    console.error("No deployedBytecode found in artifact.");
-    process.exit(1);
+  // Helper to verify directory exists
+  if (!fs.existsSync(contractsDir)) {
+    console.log(
+      `Artifacts directory not found at ${contractsDir}. Please run 'npx hardhat compile' first.`
+    );
+    return;
   }
 
-  // Bytecode string starts with '0x', so we subtract 2 from length and divide by 2 to get bytes
-  const sizeInBytes = (bytecode.length - 2) / 2;
-  const sizeInKB = sizeInBytes / 1024;
+  const contracts = [
+    { name: "VPToken", file: "VPToken.sol" },
+    { name: "VPTokenLite", file: "VPTokenLite.sol" },
+    { name: "MurmurNFT", file: "MurmurNFT.sol" },
+    { name: "MurmurNFTLite", file: "MurmurNFTLite.sol" },
+    { name: "MurmurProtocol", file: "MurmurProtocol.sol" },
+    { name: "VDOTToken", file: "VDOTToken.sol" },
+  ];
 
-  console.log(`VPToken Contract Size:`);
-  console.log(`- Bytes: ${sizeInBytes}`);
-  console.log(`- KB: ${sizeInKB.toFixed(4)} KB`);
+  console.log("Contract Size Check:");
+  console.log("---------------------");
 
-  if (sizeInBytes > 24576) {
-    // 24KB limit
-    console.warn("WARNING: Contract size exceeds 24KB limit!");
-  } else {
-    console.log("Contract size is within safe limits.");
+  for (const c of contracts) {
+    const artifactPath = path.join(contractsDir, c.file, `${c.name}.json`);
+    if (fs.existsSync(artifactPath)) {
+      const artifact = JSON.parse(fs.readFileSync(artifactPath, "utf8"));
+      const bytecode = artifact.deployedBytecode;
+      if (bytecode && bytecode !== "0x") {
+        const size = (bytecode.length - 2) / 2;
+        const sizeInKb = (size / 1024).toFixed(3);
+        console.log(`${c.name}: ${size} bytes (${sizeInKb} KB)`);
+        if (size > 24576) {
+          console.log(`  ⚠️ WARN: Exceeds Spurious Dragon limit (24KB)`);
+        }
+      } else {
+        console.log(`${c.name}: No bytecode found (interface or abstract?)`);
+      }
+    } else {
+      console.log(`${c.name}: Artifact not found at ${artifactPath}`);
+    }
   }
-} catch (error) {
-  console.error("Error reading artifact:", error);
 }
+
+main();

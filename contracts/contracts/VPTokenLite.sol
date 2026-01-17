@@ -1,36 +1,27 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts-upgradeable/token/ERC1155/ERC1155Upgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "./interfaces/IVPToken.sol";
 
 /**
- * @title VPToken
- * @notice Global VP Token with batch operations (Minimal Architecture V2)
- * @dev Supports backend-signed batch burn/mint for gas-efficient batch settlements
+ * @title VPTokenLite
+ * @notice Lightweight VP Token (Minimal Architecture V2)
+ * @dev Simplified version without full ERC1155 and AccessControl
  */
-contract VPToken is
-  Initializable,
-  ERC1155Upgradeable,
-  AccessControlUpgradeable,
-  EIP712Upgradeable,
-  UUPSUpgradeable,
-  OwnableUpgradeable,
-  IVPToken
-{
+contract VPTokenLite is Initializable, EIP712Upgradeable, UUPSUpgradeable {
   using SafeERC20 for IERC20;
   using ECDSA for bytes32;
 
-  // Roles
-  bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+  // Owner
+  address public owner;
+
+  // Operators (authorized backend signers)
+  mapping(address => bool) public operators;
 
   // vDOT token address
   IERC20 public vdotToken;
@@ -45,13 +36,13 @@ contract VPToken is
   // Total staked vDOT
   uint256 public totalStakedVdot;
 
-  // Token ID for VP (ERC-1155)
-  uint256 private constant VP_TOKEN_ID = 0;
+  // VP Balances
+  mapping(address => uint256) public balances;
 
-  // Batch operation nonce (prevents replay attacks)
-  uint256 public override batchNonce;
+  // Batch operation nonce
+  uint256 public batchNonce;
 
-  // User-specific nonce for withdrawals (prevents replay attacks)
+  // User-specific nonce for withdrawals
   mapping(address => uint256) public userNonce;
 
   // EIP-712 type hashes
@@ -61,12 +52,12 @@ contract VPToken is
   bytes32 private constant BATCH_MINT_TYPEHASH =
     keccak256("BatchMint(address[] users,uint256[] amounts,uint256 nonce)");
 
-  // New: Withdrawal Request TypeHash
   bytes32 private constant WITHDRAW_TYPEHASH =
     keccak256(
       "Withdraw(address user,uint256 vpBurnAmount,uint256 vdotReturn,uint256 nonce)"
     );
 
+  // Events
   event VdotStaked(address indexed user, uint256 vdotAmount, uint256 vpAmount);
   event VdotWithdrawn(
     address indexed user,
@@ -85,6 +76,12 @@ contract VPToken is
     uint256 totalUsers,
     uint256 totalAmount
   );
+  event OperatorUpdated(address indexed operator, bool status);
+
+  modifier onlyOwner() {
+    require(msg.sender == owner, "VP: not owner");
+    _;
+  }
 
   /// @custom:oz-upgrades-unsafe-allow constructor
   constructor() {
@@ -95,19 +92,15 @@ contract VPToken is
     address _vdotToken,
     address initialOwner
   ) public initializer {
-    __ERC1155_init("");
-    __AccessControl_init();
     __EIP712_init("MurmurVPToken", "2");
     __UUPSUpgradeable_init();
-    __Ownable_init(initialOwner);
 
     require(_vdotToken != address(0), "VP: invalid vdot address");
     require(initialOwner != address(0), "VP: invalid owner address");
 
     vdotToken = IERC20(_vdotToken);
-
-    _grantRole(DEFAULT_ADMIN_ROLE, initialOwner);
-    _grantRole(OPERATOR_ROLE, initialOwner);
+    owner = initialOwner;
+    operators[initialOwner] = true;
   }
 
   function _authorizeUpgrade(
@@ -115,11 +108,17 @@ contract VPToken is
   ) internal override onlyOwner {}
 
   /**
+   * @notice Update operator status
+   */
+  function setOperator(address operator, bool status) external onlyOwner {
+    operators[operator] = status;
+    emit OperatorUpdated(operator, status);
+  }
+
+  /**
    * @notice Stake vDOT to get VP
    */
-  function stakeVdot(
-    uint256 amount
-  ) external override returns (uint256 vpAmount) {
+  function stakeVdot(uint256 amount) external returns (uint256 vpAmount) {
     require(amount > 0, "VP: amount must be > 0");
 
     vdotToken.safeTransferFrom(msg.sender, address(this), amount);
@@ -129,29 +128,24 @@ contract VPToken is
     stakedVdot[msg.sender] += amount;
     totalStakedVdot += amount;
 
-    _mint(msg.sender, VP_TOKEN_ID, vpAmount, "");
+    balances[msg.sender] += vpAmount;
 
     emit VdotStaked(msg.sender, amount, vpAmount);
   }
 
   /**
-   * @notice Withdraw vDOT by burning VP (flexible exit)
-   * @dev Requires a backend signature to verify the exact exchange rate and amount
-   *      because the VP balance on-chain might not reflect off-chain consumption.
+   * @notice Withdraw vDOT by burning VP
    */
   function withdrawWithVP(
     uint256 vpBurnAmount,
     uint256 vdotReturn,
     uint256 nonce,
     bytes calldata signature
-  ) external override {
+  ) external {
     require(vpBurnAmount > 0, "VP: burn amount > 0");
     require(vdotReturn > 0, "VP: return amount > 0");
     require(stakedVdot[msg.sender] >= vdotReturn, "VP: insufficient staked");
-    require(
-      balanceOf(msg.sender, VP_TOKEN_ID) >= vpBurnAmount,
-      "VP: insufficient VP"
-    );
+    require(balances[msg.sender] >= vpBurnAmount, "VP: insufficient VP");
     require(nonce == userNonce[msg.sender], "VP: invalid nonce");
 
     // Verify signature
@@ -160,7 +154,7 @@ contract VPToken is
     );
     bytes32 digest = _hashTypedDataV4(structHash);
     address signer = digest.recover(signature);
-    require(hasRole(OPERATOR_ROLE, signer), "VP: invalid signature");
+    require(operators[signer], "VP: invalid signature");
 
     // Increment nonce
     userNonce[msg.sender]++;
@@ -168,9 +162,7 @@ contract VPToken is
     // Update state
     stakedVdot[msg.sender] -= vdotReturn;
     totalStakedVdot -= vdotReturn;
-
-    // Burn VP
-    _burn(msg.sender, VP_TOKEN_ID, vpBurnAmount);
+    balances[msg.sender] -= vpBurnAmount;
 
     // Transfer vDOT
     vdotToken.safeTransfer(msg.sender, vdotReturn);
@@ -181,20 +173,19 @@ contract VPToken is
   /**
    * @notice Get VP balance
    */
-  function balanceOf(address user) external view override returns (uint256) {
-    return balanceOf(user, VP_TOKEN_ID);
+  function balanceOf(address user) external view returns (uint256) {
+    return balances[user];
   }
 
   /**
-   * @notice Batch burn VP tokens with backend signature
-   * @dev Used for periodic VP settlement from off-chain activities
+   * @notice Batch burn VP tokens
    */
   function batchBurn(
     address[] calldata users,
     uint256[] calldata amounts,
     uint256 nonce,
     bytes calldata signature
-  ) external override {
+  ) external {
     require(users.length == amounts.length, "VP: length mismatch");
     require(users.length > 0, "VP: empty batch");
     require(nonce == batchNonce, "VP: invalid nonce");
@@ -210,7 +201,7 @@ contract VPToken is
     );
     bytes32 digest = _hashTypedDataV4(structHash);
     address signer = digest.recover(signature);
-    require(hasRole(OPERATOR_ROLE, signer), "VP: invalid signature");
+    require(operators[signer], "VP: invalid signature");
 
     // Increment nonce
     batchNonce++;
@@ -218,8 +209,8 @@ contract VPToken is
     // Execute burns
     uint256 totalAmount = 0;
     for (uint256 i = 0; i < users.length; i++) {
-      if (amounts[i] > 0 && balanceOf(users[i], VP_TOKEN_ID) >= amounts[i]) {
-        _burn(users[i], VP_TOKEN_ID, amounts[i]);
+      if (amounts[i] > 0 && balances[users[i]] >= amounts[i]) {
+        balances[users[i]] -= amounts[i];
         totalAmount += amounts[i];
         emit VPBurned(users[i], amounts[i]);
       }
@@ -229,15 +220,14 @@ contract VPToken is
   }
 
   /**
-   * @notice Batch mint VP tokens with backend signature
-   * @dev Used for VP refunds after topic completion
+   * @notice Batch mint VP tokens
    */
   function batchMint(
     address[] calldata users,
     uint256[] calldata amounts,
     uint256 nonce,
     bytes calldata signature
-  ) external override {
+  ) external {
     require(users.length == amounts.length, "VP: length mismatch");
     require(users.length > 0, "VP: empty batch");
     require(nonce == batchNonce, "VP: invalid nonce");
@@ -253,7 +243,7 @@ contract VPToken is
     );
     bytes32 digest = _hashTypedDataV4(structHash);
     address signer = digest.recover(signature);
-    require(hasRole(OPERATOR_ROLE, signer), "VP: invalid signature");
+    require(operators[signer], "VP: invalid signature");
 
     // Increment nonce
     batchNonce++;
@@ -262,7 +252,7 @@ contract VPToken is
     uint256 totalAmount = 0;
     for (uint256 i = 0; i < users.length; i++) {
       if (amounts[i] > 0) {
-        _mint(users[i], VP_TOKEN_ID, amounts[i], "");
+        balances[users[i]] += amounts[i];
         totalAmount += amounts[i];
         emit VPMinted(users[i], amounts[i]);
       }
@@ -276,7 +266,7 @@ contract VPToken is
    */
   function calculateVP(
     uint256 vdotAmount
-  ) public pure override returns (uint256 vpAmount) {
+  ) public pure returns (uint256 vpAmount) {
     if (vdotAmount == 0) return 0;
     uint256 sqrtVdot = sqrt(vdotAmount);
     uint256 sqrtPrecision = sqrt(PRECISION);
@@ -304,28 +294,10 @@ contract VPToken is
   }
 
   /**
-   * @notice Emergency withdraw (admin only)
+   * @notice Emergency withdraw (owner only)
    */
-  function emergencyWithdraw(
-    address to,
-    uint256 amount
-  ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+  function emergencyWithdraw(address to, uint256 amount) external onlyOwner {
     require(to != address(0), "VP: invalid recipient");
     vdotToken.safeTransfer(to, amount);
-  }
-
-  /**
-   * @notice Interface support
-   */
-  function supportsInterface(
-    bytes4 interfaceId
-  )
-    public
-    view
-    virtual
-    override(ERC1155Upgradeable, AccessControlUpgradeable)
-    returns (bool)
-  {
-    return super.supportsInterface(interfaceId);
   }
 }

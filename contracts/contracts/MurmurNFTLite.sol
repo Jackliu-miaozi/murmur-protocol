@@ -1,38 +1,33 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts-upgradeable/token/ERC721/ERC721Upgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import "@openzeppelin/contracts/utils/Base64.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "./interfaces/IVPToken.sol";
 
 /**
- * @title MurmurNFT
- * @notice Minimal NFT minter for Murmur Protocol (V2 Architecture)
- * @dev Mints NFT with backend signature, includes curated hash and batch VP refunds
+ * @title MurmurNFTLite
+ * @notice Lightweight NFT minter for Murmur Protocol (V2 Architecture)
+ * @dev Simplified version without full ERC721 - uses minimal NFT implementation
  */
-contract MurmurNFT is
+contract MurmurNFTLite is
   Initializable,
-  ERC721Upgradeable,
-  AccessControlUpgradeable,
   ReentrancyGuardUpgradeable,
   EIP712Upgradeable,
-  UUPSUpgradeable,
-  OwnableUpgradeable
+  UUPSUpgradeable
 {
   using Strings for uint256;
   using ECDSA for bytes32;
 
-  bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+  // Owner
+  address public owner;
 
-  IVPToken public vpToken;
+  // Operators (authorized backend signers)
+  mapping(address => bool) public operators;
 
   // NFT counter
   uint256 private _tokenIdCounter;
@@ -55,6 +50,10 @@ contract MurmurNFT is
   // Base URI
   string public baseImageURI = "https://murmur.protocol/nft/";
 
+  // NFT ownership
+  mapping(uint256 => address) public ownerOf;
+  mapping(address => uint256) public balanceOf;
+
   struct NFTMetadata {
     uint256 topicId;
     bytes32 topicHash;
@@ -66,7 +65,7 @@ contract MurmurNFT is
   // EIP-712 type hash
   bytes32 private constant MINT_TYPEHASH =
     keccak256(
-      "MintNFT(uint256 topicId,bytes32 topicHash,bytes32 curatedHash,address[] refundUsers,uint256[] refundAmounts,uint256 nonce)"
+      "MintNFT(uint256 topicId,bytes32 topicHash,bytes32 curatedHash,uint256 nonce)"
     );
 
   event NFTMinted(
@@ -76,36 +75,33 @@ contract MurmurNFT is
     bytes32 topicHash,
     bytes32 curatedHash
   );
-  event VPRefunded(
-    uint256 indexed topicId,
-    uint256 totalUsers,
-    uint256 totalAmount
-  );
   event BaseImageURIUpdated(string newURI);
+  event OperatorUpdated(address indexed operator, bool status);
+  event Transfer(
+    address indexed from,
+    address indexed to,
+    uint256 indexed tokenId
+  );
+
+  modifier onlyOwner() {
+    require(msg.sender == owner, "NFT: not owner");
+    _;
+  }
 
   /// @custom:oz-upgrades-unsafe-allow constructor
   constructor() {
     _disableInitializers();
   }
 
-  function initialize(
-    address _vpToken,
-    address initialOwner
-  ) public initializer {
-    __ERC721_init("Murmur Memory", "MURMUR");
-    __AccessControl_init();
+  function initialize(address initialOwner) public initializer {
     __ReentrancyGuard_init();
     __EIP712_init("MurmurNFT", "2");
     __UUPSUpgradeable_init();
-    __Ownable_init(initialOwner);
 
-    require(_vpToken != address(0), "NFT: invalid vp token");
     require(initialOwner != address(0), "NFT: invalid owner");
 
-    vpToken = IVPToken(_vpToken);
-
-    _grantRole(DEFAULT_ADMIN_ROLE, initialOwner);
-    _grantRole(OPERATOR_ROLE, initialOwner);
+    owner = initialOwner;
+    operators[initialOwner] = true;
   }
 
   function _authorizeUpgrade(
@@ -113,44 +109,33 @@ contract MurmurNFT is
   ) internal override onlyOwner {}
 
   /**
+   * @notice Update operator status
+   */
+  function setOperator(address operator, bool status) external onlyOwner {
+    operators[operator] = status;
+    emit OperatorUpdated(operator, status);
+  }
+
+  /**
    * @notice Mint NFT with backend signature
-   * @dev Includes curated hash on-chain and batch VP refunds
-   * @param topicId Topic ID
-   * @param topicHash Topic metadata hash (from IPFS)
-   * @param curatedHash Hash of curated message IDs
-   * @param refundUsers Users to refund VP to
-   * @param refundAmounts VP amounts to refund
-   * @param nonce Mint nonce
-   * @param signature Backend EIP-712 signature
    */
   function mintWithSignature(
     uint256 topicId,
     bytes32 topicHash,
     bytes32 curatedHash,
-    address[] calldata refundUsers,
-    uint256[] calldata refundAmounts,
     uint256 nonce,
     bytes calldata signature
   ) external nonReentrant returns (uint256 tokenId) {
     require(!topicMinted[topicId], "NFT: already minted");
-    require(refundUsers.length == refundAmounts.length, "NFT: length mismatch");
     require(nonce == mintNonce, "NFT: invalid nonce");
 
     // Verify signature
     bytes32 structHash = keccak256(
-      abi.encode(
-        MINT_TYPEHASH,
-        topicId,
-        topicHash,
-        curatedHash,
-        keccak256(abi.encodePacked(refundUsers)),
-        keccak256(abi.encodePacked(refundAmounts)),
-        nonce
-      )
+      abi.encode(MINT_TYPEHASH, topicId, topicHash, curatedHash, nonce)
     );
     bytes32 digest = _hashTypedDataV4(structHash);
     address signer = digest.recover(signature);
-    require(hasRole(OPERATOR_ROLE, signer), "NFT: invalid signature");
+    require(operators[signer], "NFT: invalid signature");
 
     // Increment nonce
     mintNonce++;
@@ -160,7 +145,8 @@ contract MurmurNFT is
 
     // Mint NFT
     tokenId = _tokenIdCounter++;
-    _safeMint(msg.sender, tokenId);
+    ownerOf[tokenId] = msg.sender;
+    balanceOf[msg.sender]++;
 
     // Store metadata
     tokenMetadata[tokenId] = NFTMetadata({
@@ -174,33 +160,7 @@ contract MurmurNFT is
     topicToTokenId[topicId] = tokenId;
 
     emit NFTMinted(tokenId, topicId, msg.sender, topicHash, curatedHash);
-
-    // Batch refund VP
-    if (refundUsers.length > 0) {
-      _batchRefundVP(topicId, refundUsers, refundAmounts);
-    }
-  }
-
-  /**
-   * @notice Internal batch VP refund
-   */
-  function _batchRefundVP(
-    uint256 topicId,
-    address[] calldata users,
-    uint256[] calldata amounts
-  ) internal {
-    uint256 totalAmount = 0;
-    for (uint256 i = 0; i < users.length; i++) {
-      if (amounts[i] > 0) {
-        // Note: vpToken.mint requires MINTER_ROLE
-        // This contract should be granted MINTER_ROLE on VPToken
-        totalAmount += amounts[i];
-      }
-    }
-
-    // Use VPToken's batchMint if available, or individual mints
-    // For simplicity, we'll emit an event and let backend handle via VPToken.batchMint
-    emit VPRefunded(topicId, users.length, totalAmount);
+    emit Transfer(address(0), msg.sender, tokenId);
   }
 
   /**
@@ -209,17 +169,15 @@ contract MurmurNFT is
   function getMetadata(
     uint256 tokenId
   ) external view returns (NFTMetadata memory) {
-    require(_ownerOf(tokenId) != address(0), "NFT: token not found");
+    require(ownerOf[tokenId] != address(0), "NFT: token not found");
     return tokenMetadata[tokenId];
   }
 
   /**
    * @notice Token URI (on-chain JSON)
    */
-  function tokenURI(
-    uint256 tokenId
-  ) public view override returns (string memory) {
-    require(_ownerOf(tokenId) != address(0), "NFT: token not found");
+  function tokenURI(uint256 tokenId) public view returns (string memory) {
+    require(ownerOf[tokenId] != address(0), "NFT: token not found");
     NFTMetadata memory meta = tokenMetadata[tokenId];
 
     string memory json = string(
@@ -253,9 +211,7 @@ contract MurmurNFT is
   /**
    * @notice Set base image URI
    */
-  function setBaseImageURI(
-    string memory newURI
-  ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+  function setBaseImageURI(string memory newURI) external onlyOwner {
     baseImageURI = newURI;
     emit BaseImageURIUpdated(newURI);
   }
@@ -268,17 +224,16 @@ contract MurmurNFT is
   }
 
   /**
-   * @notice Interface support
+   * @notice Simple transfer (non-standard, no approvals)
    */
-  function supportsInterface(
-    bytes4 interfaceId
-  )
-    public
-    view
-    virtual
-    override(ERC721Upgradeable, AccessControlUpgradeable)
-    returns (bool)
-  {
-    return super.supportsInterface(interfaceId);
+  function transfer(address to, uint256 tokenId) external {
+    require(ownerOf[tokenId] == msg.sender, "NFT: not owner");
+    require(to != address(0), "NFT: invalid recipient");
+
+    balanceOf[msg.sender]--;
+    balanceOf[to]++;
+    ownerOf[tokenId] = to;
+
+    emit Transfer(msg.sender, to, tokenId);
   }
 }
