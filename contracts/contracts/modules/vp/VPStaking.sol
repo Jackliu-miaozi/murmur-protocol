@@ -2,16 +2,19 @@
 pragma solidity ^0.8.20;
 
 import { LibVPStorage } from "../../libraries/LibVPStorage.sol";
+import { LibPausable } from "../../libraries/LibPausable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /**
  * @title VPStakingFacet
- * @dev VP Token staking functionality (Diamond Facet)
+ * @notice VP Token staking functionality (Diamond Facet)
+ * @dev Allows users to stake vDOT tokens in exchange for VP (Voting Points)
  */
 contract VPStaking {
   using SafeERC20 for IERC20;
 
+  /// @notice VP calculation constant: VP = K * sqrt(vDOT)
   uint256 public constant K = 100;
   uint256 private constant PRECISION = 1e18;
 
@@ -24,9 +27,16 @@ contract VPStaking {
     s.vdotToken = IERC20(_vdotToken);
     s.owner = _owner;
     s.operators[_owner] = true;
+    s.emergencyDelay = 7 days; // Set default emergency delay
   }
 
+  /**
+   * @notice Stake vDOT to receive VP
+   * @param amount Amount of vDOT to stake
+   * @return vpAmount Amount of VP received
+   */
   function stakeVdot(uint256 amount) external returns (uint256 vpAmount) {
+    LibPausable.requireNotPaused();
     require(amount > 0, "VP: amount must be > 0");
     LibVPStorage.Storage storage s = LibVPStorage.load();
 

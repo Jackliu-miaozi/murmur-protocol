@@ -39,6 +39,7 @@ module.exports = {
       polkavm: true,
       url: "https://testnet-passet-hub-eth-rpc.polkadot.io",
       accounts: [vars.get("PRIVATE_KEY")],
+      timeout: 6000000,
     },
   },
 };

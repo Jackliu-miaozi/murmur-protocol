@@ -2,12 +2,15 @@
 pragma solidity ^0.8.20;
 
 import { LibNFTStorage } from "../../libraries/LibNFTStorage.sol";
+import { LibPausable } from "../../libraries/LibPausable.sol";
+import { LibReentrancyGuard } from "../../libraries/LibReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 /**
  * @title NFTMintFacet
- * @dev NFT minting functionality (Diamond Facet)
+ * @notice NFT minting functionality (Diamond Facet)
+ * @dev Allows users to mint Memory NFTs with operator signature and fee payment
  */
 contract NFTMint {
   using ECDSA for bytes32;
@@ -16,7 +19,9 @@ contract NFTMint {
   uint256 public constant MINT_FEE = 0.1 ether;
 
   bytes32 private constant MINT_TYPEHASH =
-    keccak256("MintNFT(uint256 topicId,bytes32 ipfsHash,uint256 nonce)");
+    keccak256(
+      "MintNFT(address minter,uint256 topicId,bytes32 ipfsHash,uint256 nonce)"
+    );
 
   bytes32 private constant TYPE_HASH =
     keccak256(
@@ -42,6 +47,10 @@ contract NFTMint {
     uint256 amount
   );
 
+  /**
+   * @notice Initialize the NFT module
+   * @param _owner Initial owner address
+   */
   function initialize(address _owner) external {
     LibNFTStorage.Storage storage s = LibNFTStorage.load();
     require(!s.initialized, "NFT: already initialized");
@@ -51,12 +60,23 @@ contract NFTMint {
     s.feeRecipient = _owner; // Default fee recipient is owner
   }
 
+  /**
+   * @notice Mint a Memory NFT with operator signature
+   * @param topicId Topic ID this NFT is associated with
+   * @param ipfsHash IPFS content hash (CIDv1)
+   * @param nonce Current mint nonce
+   * @param signature Operator's EIP-712 signature
+   * @return tokenId The minted token ID
+   */
   function mintWithSignature(
     uint256 topicId,
     bytes32 ipfsHash,
     uint256 nonce,
     bytes calldata signature
   ) external payable returns (uint256 tokenId) {
+    LibPausable.requireNotPaused();
+    LibReentrancyGuard.enter();
+
     LibNFTStorage.Storage storage s = LibNFTStorage.load();
 
     require(msg.value >= MINT_FEE, "NFT: insufficient fee");
@@ -64,19 +84,19 @@ contract NFTMint {
     require(nonce == s.mintNonce, "NFT: invalid nonce");
 
     bytes32 structHash = keccak256(
-      abi.encode(MINT_TYPEHASH, topicId, ipfsHash, nonce)
+      abi.encode(MINT_TYPEHASH, msg.sender, topicId, ipfsHash, nonce)
     );
     bytes32 digest = _hashTypedDataV4(structHash);
     address signer = digest.recover(signature);
     require(s.operators[signer], "NFT: invalid signature");
 
     // Collect minting fee
-    address feeRecipient = s.feeRecipient != address(0)
+    address feeRecipient_ = s.feeRecipient != address(0)
       ? s.feeRecipient
       : s.owner;
-    (bool success, ) = feeRecipient.call{ value: MINT_FEE }("");
+    (bool success, ) = feeRecipient_.call{ value: MINT_FEE }("");
     require(success, "NFT: fee transfer failed");
-    emit MintFeeCollected(msg.sender, feeRecipient, MINT_FEE);
+    emit MintFeeCollected(msg.sender, feeRecipient_, MINT_FEE);
 
     // Refund excess payment
     if (msg.value > MINT_FEE) {
@@ -93,14 +113,22 @@ contract NFTMint {
     s.tokenIPFS[tokenId] = ipfsHash;
     s.tokenTopic[tokenId] = topicId;
 
+    LibReentrancyGuard.exit();
+
     emit NFTMinted(tokenId, topicId, msg.sender, ipfsHash);
     emit Transfer(address(0), msg.sender, tokenId);
   }
 
+  /**
+   * @notice Get current mint nonce
+   */
   function mintNonce() external view returns (uint256) {
     return LibNFTStorage.load().mintNonce;
   }
 
+  /**
+   * @notice Check if a topic has already been minted
+   */
   function topicMinted(uint256 topicId) external view returns (bool) {
     return LibNFTStorage.load().topicMinted[topicId];
   }
@@ -124,6 +152,9 @@ contract NFTMint {
       );
   }
 
+  /**
+   * @notice Get the domain separator for EIP-712
+   */
   function domainSeparator() external view returns (bytes32) {
     return _domainSeparatorV4();
   }

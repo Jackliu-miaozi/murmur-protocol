@@ -23,6 +23,10 @@ library LibVPStorage {
     // Emergency withdrawal: track last activity time per user
     mapping(address => uint256) lastActivityTime;
     uint256 emergencyDelay; // Default: 7 days
+    // Two-step ownership transfer
+    address pendingOwner;
+    // Reserved storage gap for future upgrades
+    uint256[48] __gap;
   }
 
   function load() internal pure returns (Storage storage s) {

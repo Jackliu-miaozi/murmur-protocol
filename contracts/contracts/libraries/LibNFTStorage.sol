@@ -20,6 +20,13 @@ library LibNFTStorage {
     uint256 mintNonce;
     bool initialized;
     address feeRecipient; // Address to receive minting fees
+    // ERC-721 Approval mappings
+    mapping(uint256 => address) tokenApprovals; // tokenId => approved address
+    mapping(address => mapping(address => bool)) operatorApprovals; // owner => operator => approved
+    // Two-step ownership transfer
+    address pendingOwner;
+    // Reserved storage gap for future upgrades
+    uint256[47] __gap;
   }
 
   function load() internal pure returns (Storage storage s) {

@@ -6,9 +6,10 @@
  * TL;DR - This is where all the tRPC server stuff is created and plugged in. The pieces you will
  * need to use are documented accordingly near the end.
  */
-import { initTRPC } from "@trpc/server";
+import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import { ZodError } from "zod";
+import { verifyMessage } from "viem";
 
 /**
  * 1. CONTEXT
@@ -101,3 +102,40 @@ const timingMiddleware = t.middleware(async ({ next, path }) => {
  * are logged in.
  */
 export const publicProcedure = t.procedure.use(timingMiddleware);
+
+const walletAuthMiddleware = t.middleware(async ({ ctx, next }) => {
+  const signature = ctx.headers.get("x-wallet-signature");
+  const message = ctx.headers.get("x-wallet-message");
+  const address = ctx.headers.get("x-wallet-address");
+
+  if (!signature || !message || !address) {
+    throw new TRPCError({
+      code: "UNAUTHORIZED",
+      message: "Missing wallet auth",
+    });
+  }
+
+  const isValid = await verifyMessage({
+    address: address as `0x${string}`,
+    message,
+    signature: signature as `0x${string}`,
+  });
+
+  if (!isValid) {
+    throw new TRPCError({
+      code: "UNAUTHORIZED",
+      message: "Invalid signature",
+    });
+  }
+
+  return next({
+    ctx: {
+      ...ctx,
+      userAddress: address.toLowerCase(),
+    },
+  });
+});
+
+export const protectedProcedure = t.procedure
+  .use(timingMiddleware)
+  .use(walletAuthMiddleware);

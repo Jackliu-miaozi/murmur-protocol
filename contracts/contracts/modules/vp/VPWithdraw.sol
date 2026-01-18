@@ -2,13 +2,16 @@
 pragma solidity ^0.8.20;
 
 import { LibVPStorage } from "../../libraries/LibVPStorage.sol";
+import { LibPausable } from "../../libraries/LibPausable.sol";
+import { LibReentrancyGuard } from "../../libraries/LibReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 /**
  * @title VPWithdrawFacet
- * @dev VP Token withdrawal functionality (Diamond Facet)
+ * @notice VP Token withdrawal functionality (Diamond Facet)
+ * @dev Handles normal withdrawals (with signature) and emergency withdrawals (with cooldown)
  */
 contract VPWithdraw {
   using SafeERC20 for IERC20;
@@ -32,13 +35,25 @@ contract VPWithdraw {
     uint256 vdotAmount,
     uint256 vpBurned
   );
+  event EmergencyWithdrawRequested(address indexed user, uint256 unlockTime);
+  event EmergencyWithdrawn(address indexed user, uint256 vdotAmount);
 
+  /**
+   * @notice Withdraw vDOT by burning VP (requires operator signature)
+   * @param vpBurnAmount Amount of VP to burn
+   * @param vdotReturn Amount of vDOT to return
+   * @param nonce User's current nonce
+   * @param signature Operator's EIP-712 signature
+   */
   function withdrawWithVP(
     uint256 vpBurnAmount,
     uint256 vdotReturn,
     uint256 nonce,
     bytes calldata signature
   ) external {
+    LibPausable.requireNotPaused();
+    LibReentrancyGuard.enter();
+
     LibVPStorage.Storage storage s = LibVPStorage.load();
 
     require(vpBurnAmount > 0, "VP: burn amount > 0");
@@ -63,9 +78,14 @@ contract VPWithdraw {
     s.lastActivityTime[msg.sender] = 0;
 
     s.vdotToken.safeTransfer(msg.sender, vdotReturn);
+
+    LibReentrancyGuard.exit();
     emit VdotWithdrawn(msg.sender, vdotReturn, vpBurnAmount);
   }
 
+  /**
+   * @notice Get user's current nonce
+   */
   function userNonce(address user) external view returns (uint256) {
     return LibVPStorage.load().userNonce[user];
   }
@@ -89,25 +109,38 @@ contract VPWithdraw {
       );
   }
 
+  /**
+   * @notice Get the domain separator for EIP-712
+   */
   function domainSeparator() external view returns (bytes32) {
     return _domainSeparatorV4();
   }
 
   /**
    * @notice Request emergency withdrawal (starts cooldown)
-   * @dev User must wait emergencyDelay (7 days) before withdrawing
+   * @dev User must wait emergencyDelay (default: 7 days) before withdrawing
    */
   function requestEmergencyWithdraw() external {
     LibVPStorage.Storage storage s = LibVPStorage.load();
     require(s.stakedVdot[msg.sender] > 0, "VP: no stake");
+
+    uint256 delay = s.emergencyDelay > 0 ? s.emergencyDelay : 7 days;
+    uint256 unlockTime = block.timestamp + delay;
+
     s.lastActivityTime[msg.sender] = block.timestamp;
+
+    emit EmergencyWithdrawRequested(msg.sender, unlockTime);
   }
 
   /**
    * @notice Emergency withdraw after cooldown period
    * @dev Can only withdraw if no backend activity for emergencyDelay period
+   *      This function is NOT pausable to ensure users can always exit
    */
   function emergencyWithdraw() external {
+    // Note: Deliberately NOT checking pause state - emergency exit must always work
+    LibReentrancyGuard.enter();
+
     LibVPStorage.Storage storage s = LibVPStorage.load();
 
     uint256 lastActivity = s.lastActivityTime[msg.sender];
@@ -128,11 +161,13 @@ contract VPWithdraw {
     // Return all staked vDOT
     s.vdotToken.safeTransfer(msg.sender, stakedAmount);
 
+    LibReentrancyGuard.exit();
     emit EmergencyWithdrawn(msg.sender, stakedAmount);
   }
 
   /**
    * @notice Get remaining cooldown time for emergency withdrawal
+   * @return Seconds remaining, or max uint256 if not requested
    */
   function emergencyCooldownRemaining(
     address user
@@ -148,5 +183,11 @@ contract VPWithdraw {
     return unlockTime - block.timestamp;
   }
 
-  event EmergencyWithdrawn(address indexed user, uint256 vdotAmount);
+  /**
+   * @notice Get the configured emergency delay
+   */
+  function emergencyDelay() external view returns (uint256) {
+    uint256 delay = LibVPStorage.load().emergencyDelay;
+    return delay > 0 ? delay : 7 days;
+  }
 }

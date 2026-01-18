@@ -2,19 +2,21 @@
  * Murmur Protocol - Topic Router (Prisma + Supabase)
  */
 import { z } from "zod";
-import { createTRPCRouter, publicProcedure } from "@/server/api/trpc";
+import { createTRPCRouter, protectedProcedure, publicProcedure } from "@/server/api/trpc";
 import {
   topicStore,
+  vpBalanceStore,
   vpStore,
   TopicStatus,
   VpAction,
 } from "@/server/murmur/store";
+import { TRPCError } from "@trpc/server";
 
 export const topicRouter = createTRPCRouter({
   /**
    * Create a new topic
    */
-  create: publicProcedure
+  create: protectedProcedure
     .input(
       z.object({
         title: z.string().min(1).max(200),
@@ -22,25 +24,49 @@ export const topicRouter = createTRPCRouter({
         duration: z.number().min(3600).max(604800), // 1 hour to 7 days
         freezeWindow: z.number().min(60).max(3600), // 1 min to 1 hour
         curatedLimit: z.number().min(10).max(100),
-        creator: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
+        spaceId: z.number(),
+        ipfsHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/).optional(),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      const creator = ctx.userAddress;
+
+      // Check VP balance (10,000 VP)
+      const creationCost = BigInt(10000) * BigInt(10 ** 18);
+      const balance = await vpBalanceStore.getEffectiveBalance(creator);
+      if (balance < creationCost) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Insufficient VP",
+        });
+      }
+
+      const space = await topicStore.getSpace(input.spaceId);
+      if (!space) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Space not found",
+        });
+      }
+
       // Create topic
       const topic = await topicStore.create({
         title: input.title,
         description: input.description,
-        creator: input.creator.toLowerCase(),
+        creator,
         duration: input.duration,
         freezeWindow: input.freezeWindow,
         curatedLimit: input.curatedLimit,
+        spaceId: input.spaceId,
+        ipfsHash: input.ipfsHash,
       });
 
-      // Record VP consumption for topic creation (1000 VP base cost)
-      const creationCost = BigInt(1000) * BigInt(10 ** 18);
+      await vpBalanceStore.deductBalance(creator, creationCost);
+
+      // Record VP consumption for topic creation
       await vpStore.record(
         topic.id,
-        input.creator,
+        creator,
         creationCost,
         VpAction.CREATE_TOPIC,
       );
@@ -92,18 +118,51 @@ export const topicRouter = createTRPCRouter({
   /**
    * Close topic (if expired)
    */
-  close: publicProcedure
+  close: protectedProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const topic = await topicStore.get(input.id);
       if (!topic) {
-        throw new Error("Topic not found");
+        throw new TRPCError({ code: "NOT_FOUND", message: "Topic not found" });
+      }
+      if (topic.creator !== ctx.userAddress) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Only creator can close",
+        });
       }
       if (!topicStore.isExpired(topic)) {
-        throw new Error("Topic not expired yet");
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Topic not expired yet",
+        });
       }
 
       await topicStore.updateStatus(input.id, TopicStatus.CLOSED);
+      return { success: true };
+    }),
+
+  land: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const topic = await topicStore.get(input.id);
+      if (!topic) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Topic not found" });
+      }
+      if (topic.creator !== ctx.userAddress) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Only creator can land",
+        });
+      }
+      if (topic.status !== TopicStatus.CLOSED) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Topic must be closed first",
+        });
+      }
+
+      await topicStore.updateStatus(input.id, TopicStatus.LANDED);
       return { success: true };
     }),
 });

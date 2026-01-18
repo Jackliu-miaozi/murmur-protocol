@@ -4,3 +4,4 @@
 export * from "./types";
 export * from "./store";
 export * from "./signature";
+export * from "./chain";

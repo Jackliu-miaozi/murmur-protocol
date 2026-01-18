@@ -12,34 +12,72 @@ datasource db {
 // Topic - 议题表
 // ============================================
 model Topic {
-  id            Int           @id @default(autoincrement())
-  title         String        @db.VarChar(200)
-  description   String        @db.Text
-  metadataHash  String        @db.VarChar(66) // 0x + 64 hex chars
-  creator       String        @db.VarChar(42) // Ethereum address
-  createdAt     DateTime      @default(now())
-  duration      Int           // Duration in seconds
-  freezeWindow  Int           // Freeze window in seconds
-  curatedLimit  Int           @default(50)
-  status        TopicStatus   @default(LIVE)
-  messageCount  Int           @default(0)
-  uniqueUsers   Int           @default(0)
+  id                Int            @id @default(autoincrement())
+  title             String         @db.VarChar(200)
+  description       String         @db.Text
+  metadataHash      String         @db.VarChar(66) // 0x + 64 hex chars
+  ipfsHash          String?        @db.VarChar(66) // bytes32 for NFT minting
+  creator           String         @db.VarChar(42) // Ethereum address
+  spaceId           Int
+  createdAt         DateTime       @default(now())
+  duration          Int            // Duration in seconds
+  freezeWindow      Int            // Freeze window in seconds
+  curatedLimit      Int            @default(50)
+  status            TopicStatus    @default(LIVE)
+  openGovStatus     OpenGovStatus  @default(DRAFT)
+  openGovProposalId String?        @db.VarChar(100)
+  openGovReportHash String?        @db.VarChar(66)
+  openGovTxHash     String?        @db.VarChar(66)
+  openGovSubmittedAt DateTime?
+  messageCount      Int            @default(0)
+  uniqueUsers       Int            @default(0)
 
   // Relations
-  messages      Message[]
-  vpConsumptions VpConsumption[]
-  curatedList   CuratedList[]
+  space             Space          @relation(fields: [spaceId], references: [id])
+  openGovReport     OpenGovReport?
+  messages          Message[]
+  vpConsumptions    VpConsumption[]
+  curatedList       CuratedList[]
 
   @@index([status])
   @@index([creator])
   @@index([createdAt])
+  @@index([spaceId])
 }
 
 enum TopicStatus {
   LIVE
   FROZEN
   CLOSED
+  LANDED
   MINTED
+}
+
+enum OpenGovStatus {
+  DRAFT
+  READY
+  IN_REFERENDUM
+  APPROVED
+  REJECTED
+  EXECUTED
+}
+
+// ============================================
+// OpenGovReport - OpenGov 报告
+// ============================================
+model OpenGovReport {
+  id              Int      @id @default(autoincrement())
+  topicId         Int      @unique
+  summary         String   @db.Text
+  sentimentScore  Float
+  curatedMessageIds String @db.Text
+  reportHash      String   @db.VarChar(66)
+  createdAt       DateTime @default(now())
+
+  // Relations
+  topic           Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@index([topicId])
 }
 
 // ============================================
@@ -53,7 +91,7 @@ model Message {
   contentHash   String        @db.VarChar(66)
   length        Int
   aiScore       Float         @default(0.5)
-  vpCost        Float         @default(0)
+  vpCost        Decimal       @default(0) @db.Decimal(78, 0)
   likeCount     Int           @default(0)
   createdAt     DateTime      @default(now())
 
@@ -212,12 +250,30 @@ model VpReward {
   user          User          @relation(fields: [userAddress], references: [address])
 
   @@index([userAddress, processed])
+  @@unique([source, referenceId])
 }
 
 enum RewardSource {
   LIKE_EARNED
   CURATED_BONUS
   SYSTEM_ADJUSTMENT
+}
+
+// ============================================
+// Space - 项目空间
+// ============================================
+model Space {
+  id            Int      @id @default(autoincrement())
+  name          String   @unique @db.VarChar(100)
+  owner         String   @db.VarChar(42)
+  twitterHandle String?  @db.VarChar(50)
+  description   String?  @db.Text
+  createdAt     DateTime @default(now())
+
+  // Relations
+  topics        Topic[]
+
+  @@index([owner])
 }
 
 // ============================================

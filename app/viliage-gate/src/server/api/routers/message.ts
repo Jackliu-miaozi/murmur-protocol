@@ -2,75 +2,100 @@
  * Murmur Protocol - Message Router (Prisma + Supabase)
  */
 import { z } from "zod";
-import { createTRPCRouter, publicProcedure } from "@/server/api/trpc";
+import { createTRPCRouter, protectedProcedure, publicProcedure } from "@/server/api/trpc";
 import {
+  curationStore,
+  likeStore,
   messageStore,
   topicStore,
+  vpBalanceStore,
+  vpRewardStore,
   vpStore,
-  curationStore,
   TopicStatus,
   VpAction,
 } from "@/server/murmur/store";
+import { TRPCError } from "@trpc/server";
+import { Prisma } from "@prisma/client";
 import { keccak256, toHex } from "viem";
 
 // VP cost calculation constants
-const BASE_COST = BigInt(10) * BigInt(10 ** 18); // 10 VP
+const BASE_COST = BigInt(2) * BigInt(10 ** 18); // 2 VP
 const LIKE_COST = BigInt(1) * BigInt(10 ** 18); // 1 VP
 
 export const messageRouter = createTRPCRouter({
   /**
    * Post a new message
    */
-  post: publicProcedure
+  post: protectedProcedure
     .input(
       z.object({
         topicId: z.number(),
         content: z.string().min(1).max(5000),
-        author: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const topic = await topicStore.get(input.topicId);
       if (!topic) {
-        throw new Error("Topic not found");
+        throw new TRPCError({ code: "NOT_FOUND", message: "Topic not found" });
       }
       if (topic.status !== TopicStatus.LIVE) {
-        throw new Error("Topic is not live");
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Topic is not live",
+        });
       }
       if (topicStore.isExpired(topic)) {
         await topicStore.updateStatus(input.topicId, TopicStatus.CLOSED);
-        throw new Error("Topic has expired");
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Topic has expired",
+        });
+      }
+      if (topicStore.isFrozen(topic)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Topic is frozen",
+        });
       }
 
       // Calculate content hash
       const contentHash = keccak256(toHex(input.content));
 
-      // Calculate VP cost (simplified)
+      // Calculate VP cost (useway)
       const length = input.content.length;
-      const aiScore = 0.5; // TODO: Call AI service
+      const aiScore = 0.5; // Fixed for MVP
+      const lengthMultiplier = 1 + 0.05 * Math.max(length - 10, 0);
+      const intensityMultiplier = 1 + 9 * aiScore * aiScore;
+      const vpCost =
+        (BASE_COST * BigInt(Math.round(lengthMultiplier * 100)) *
+          BigInt(Math.round(intensityMultiplier * 100))) /
+        10_000n;
 
-      const lengthMultiplier = 1 + 0.15 * Math.log(1 + length);
-      const intensityMultiplier = 1 + 2 * aiScore * aiScore;
-      const vpCostNumber = Math.floor(
-        (Number(BASE_COST) * lengthMultiplier * intensityMultiplier) / 10 ** 18,
-      );
-      const vpCost = BigInt(vpCostNumber) * BigInt(10 ** 18);
+      const balance = await vpBalanceStore.getEffectiveBalance(ctx.userAddress);
+      if (balance < vpCost) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Insufficient VP",
+        });
+      }
 
       // Create message
       const message = await messageStore.create({
         topicId: input.topicId,
-        author: input.author.toLowerCase(),
+        author: ctx.userAddress,
         content: input.content,
         contentHash,
         length,
         aiScore,
-        vpCost: vpCostNumber,
+        vpCost,
       });
+
+      await vpBalanceStore.deductBalance(ctx.userAddress, vpCost);
 
       // Record VP consumption
       await vpStore.record(
         input.topicId,
-        input.author,
+        ctx.userAddress,
         vpCost,
         VpAction.MESSAGE,
       );
@@ -117,42 +142,77 @@ export const messageRouter = createTRPCRouter({
   /**
    * Like a message
    */
-  like: publicProcedure
+  like: protectedProcedure
     .input(
       z.object({
         messageId: z.number(),
-        userAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const message = await messageStore.get(input.messageId);
       if (!message) {
-        throw new Error("Message not found");
+        throw new TRPCError({ code: "NOT_FOUND", message: "Message not found" });
       }
 
       const topic = await topicStore.get(message.topicId);
       if (!topic || topic.status !== TopicStatus.LIVE) {
-        throw new Error("Topic is not live");
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Topic is not live",
+        });
+      }
+
+      const balance = await vpBalanceStore.getEffectiveBalance(ctx.userAddress);
+      if (balance < LIKE_COST) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Insufficient VP",
+        });
+      }
+
+      try {
+        await likeStore.create(input.messageId, ctx.userAddress);
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2002"
+        ) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Already liked",
+          });
+        }
+        throw error;
       }
 
       // Like the message
       const updated = await messageStore.like(input.messageId);
 
+      await vpBalanceStore.deductBalance(ctx.userAddress, LIKE_COST);
+
       // Record VP consumption
       await vpStore.record(
         message.topicId,
-        input.userAddress,
+        ctx.userAddress,
         LIKE_COST,
         VpAction.LIKE,
       );
 
+      await vpRewardStore.grantResonanceBonus(input.messageId, ctx.userAddress);
+
       // Update curation
       if (updated) {
-        await curationStore.update(
+        const { added } = await curationStore.update(
           message.topicId,
           input.messageId,
           updated.likeCount,
         );
+        if (added) {
+          await vpRewardStore.grantCuratedBonus(
+            message.topicId,
+            input.messageId,
+          );
+        }
       }
 
       return {

@@ -2,16 +2,18 @@
  * Murmur Protocol - Settlement Router (Prisma + Supabase)
  */
 import { z } from "zod";
-import { createTRPCRouter, publicProcedure } from "@/server/api/trpc";
+import { createTRPCRouter, protectedProcedure, publicProcedure } from "@/server/api/trpc";
 import {
-  vpStore,
-  topicStore,
-  curationStore,
-  settlementStore,
   mintedNFTStore,
+  settlementStore,
   TopicStatus,
+  topicStore,
+  vpRewardStore,
+  vpStore,
 } from "@/server/murmur/store";
+import { getMintNonce, getSettlementNonce } from "@/server/murmur/chain";
 import { signatureService } from "@/server/murmur/signature";
+import { TRPCError } from "@trpc/server";
 import { type Hex } from "viem";
 
 export const settlementRouter = createTRPCRouter({
@@ -21,52 +23,79 @@ export const settlementRouter = createTRPCRouter({
   getPending: publicProcedure.query(async () => {
     const aggregated = await vpStore.aggregateUnsettled();
     const users = Array.from(aggregated.keys());
-    const amounts = users.map((u) => aggregated.get(u)!.toString());
+    const deltas = users.map((u) => aggregated.get(u)!.toString());
 
     return {
       users,
-      amounts,
+      deltas,
       count: users.length,
-      totalVP: amounts.reduce((sum, a) => sum + BigInt(a), 0n).toString(),
+      totalVP: deltas.reduce((sum, a) => sum + BigInt(a), 0n).toString(),
     };
   }),
 
   /**
    * Generate batch burn signature
    */
-  signBatchBurn: publicProcedure.mutation(async () => {
-    const aggregated = await vpStore.aggregateUnsettled();
-    const users = Array.from(aggregated.keys()) as Hex[];
-    const amounts = users.map((u) => aggregated.get(u)!);
+  signSettlement: protectedProcedure
+    .input(
+      z
+        .object({
+          dryRun: z.boolean().optional(),
+          limit: z.number().min(1).max(200).optional(),
+        })
+        .optional(),
+    )
+    .mutation(async ({ input }) => {
+      const aggregated = await vpStore.aggregateUnsettled();
+      const users = Array.from(aggregated.keys()) as Hex[];
 
-    if (users.length === 0) {
-      throw new Error("No pending settlements");
-    }
+      if (users.length === 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "No pending settlements",
+        });
+      }
 
-    const nonce = await settlementStore.getNextNonce();
+      const limit = input?.limit ?? 200;
+      const batchUsers = users.slice(0, limit);
+      const batchDeltas = batchUsers.map((u) => aggregated.get(u)!);
 
-    const signature = await signatureService.signBatchBurn(
-      users,
-      amounts,
-      BigInt(nonce),
-    );
+      if (input?.dryRun) {
+        return {
+          dryRun: true,
+          users: batchUsers.length,
+          totalVP: batchDeltas.reduce((sum, d) => sum + d, 0n).toString(),
+          hasMore: users.length > batchUsers.length,
+        };
+      }
 
-    // Create settlement record
-    const settlement = await settlementStore.create(nonce, "BATCH_BURN");
+      const nonce = await getSettlementNonce();
 
-    return {
-      settlementId: settlement.id,
-      users,
-      amounts: amounts.map((a) => a.toString()),
-      nonce,
-      signature,
-    };
-  }),
+      const signature = await signatureService.signSettlement(
+        batchUsers,
+        batchDeltas,
+        nonce,
+      );
+
+      const settlement = await settlementStore.getOrCreate(
+        Number(nonce),
+        "BATCH_BURN",
+      );
+
+      return {
+        settlementId: settlement.id,
+        users: batchUsers,
+        deltas: batchDeltas.map((d) => d.toString()),
+        nonce: nonce.toString(),
+        signature,
+        hasMore: users.length > batchUsers.length,
+      };
+    }),
 
   /**
    * Confirm settlement (after tx confirmed on-chain)
    */
-  confirmSettlement: publicProcedure
+  confirmSettlement: protectedProcedure
     .input(
       z.object({
         settlementId: z.number(),
@@ -82,8 +111,13 @@ export const settlementRouter = createTRPCRouter({
       const ids = unsettled.map((c) => c.id);
       await vpStore.markSettled(ids, input.settlementId);
 
+      const rewards = await vpStore.getUnprocessedRewards();
+      const rewardIds = rewards.map((r) => r.id);
+      await vpRewardStore.markProcessed(rewardIds);
+
       return {
         settledCount: ids.length,
+        rewardCount: rewardIds.length,
         txHash: input.txHash,
       };
     }),
@@ -91,50 +125,53 @@ export const settlementRouter = createTRPCRouter({
   /**
    * Generate NFT mint signature (with VP refunds)
    */
-  signMintNFT: publicProcedure
-    .input(z.object({ topicId: z.number() }))
-    .mutation(async ({ input }) => {
+  signMintNFT: protectedProcedure
+    .input(
+      z.object({
+        topicId: z.number(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
       const topic = await topicStore.get(input.topicId);
       if (!topic) {
-        throw new Error("Topic not found");
+        throw new TRPCError({ code: "NOT_FOUND", message: "Topic not found" });
       }
-      if (topic.status !== TopicStatus.CLOSED) {
-        throw new Error("Topic must be closed to mint NFT");
+      if (topic.status !== TopicStatus.LANDED) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Topic must be landed to mint NFT",
+        });
+      }
+      if (!topic.ipfsHash) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Missing ipfsHash",
+        });
       }
 
       // Check if already minted
       const existing = await mintedNFTStore.getByTopic(input.topicId);
       if (existing) {
-        throw new Error("NFT already minted for this topic");
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "NFT already minted for this topic",
+        });
       }
 
-      // Get curated hash
-      const curatedHash = (await curationStore.getCuratedHash(
-        input.topicId,
-      )) as Hex;
-
-      // Get refund data
-      const { users, amounts } = await vpStore.getRefundData(input.topicId);
-
-      const nonce = await settlementStore.getNextNonce();
+      const nonce = await getMintNonce();
 
       // Generate signature
       const signature = await signatureService.signMintNFT(
+        ctx.userAddress as Hex,
         BigInt(input.topicId),
-        topic.metadataHash as Hex,
-        curatedHash,
-        users as Hex[],
-        amounts,
-        BigInt(nonce),
+        topic.ipfsHash as Hex,
+        nonce,
       );
 
       return {
         topicId: input.topicId,
-        topicHash: topic.metadataHash,
-        curatedHash,
-        refundUsers: users,
-        refundAmounts: amounts.map((a) => a.toString()),
-        nonce,
+        ipfsHash: topic.ipfsHash,
+        nonce: nonce.toString(),
         signature,
       };
     }),
@@ -142,29 +179,26 @@ export const settlementRouter = createTRPCRouter({
   /**
    * Record minted NFT
    */
-  recordMintedNFT: publicProcedure
+  recordMintedNFT: protectedProcedure
     .input(
       z.object({
         topicId: z.number(),
         tokenId: z.number(),
-        minter: z.string(),
         txHash: z.string().optional(),
       }),
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const topic = await topicStore.get(input.topicId);
       if (!topic) {
-        throw new Error("Topic not found");
+        throw new TRPCError({ code: "NOT_FOUND", message: "Topic not found" });
       }
-
-      const curatedHash = await curationStore.getCuratedHash(input.topicId);
 
       const nft = await mintedNFTStore.create({
         topicId: input.topicId,
         tokenId: input.tokenId,
         topicHash: topic.metadataHash,
-        curatedHash,
-        minter: input.minter.toLowerCase(),
+        curatedHash: topic.ipfsHash ?? topic.metadataHash,
+        minter: ctx.userAddress,
         txHash: input.txHash,
       });
 
@@ -177,14 +211,9 @@ export const settlementRouter = createTRPCRouter({
   /**
    * Get VP consumption history for a user
    */
-  getUserVpHistory: publicProcedure
-    .input(
-      z.object({
-        userAddress: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
-      }),
-    )
-    .query(async ({ input }) => {
-      const consumptions = await vpStore.getByUser(input.userAddress);
+  getUserVpHistory: protectedProcedure
+    .query(async ({ ctx }) => {
+      const consumptions = await vpStore.getByUser(ctx.userAddress);
       const total = consumptions.reduce(
         (sum, c) => sum + BigInt(c.amount.toString()),
         0n,
