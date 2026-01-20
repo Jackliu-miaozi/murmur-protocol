@@ -23,8 +23,8 @@ export const publicClient = createPublicClient({
   },
 });
 
-const vpTokenAddress = process.env.VP_TOKEN_ADDRESS as Address | undefined;
-const nftAddress = process.env.MURMUR_NFT_ADDRESS as Address | undefined;
+const vpTokenAddress = process.env.VP_TOKEN_ADDRESS as Address;
+const nftAddress = process.env.MURMUR_NFT_ADDRESS as Address;
 
 if (!vpTokenAddress) {
   throw new Error("VP_TOKEN_ADDRESS is required");

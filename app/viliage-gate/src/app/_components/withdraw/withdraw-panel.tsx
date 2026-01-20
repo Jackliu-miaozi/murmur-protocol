@@ -8,7 +8,7 @@ const parseToWei = (value: string) => {
   if (!value) return 0n;
   const [whole, fraction = ""] = value.split(".");
   const fractionPadded = (fraction + "000000000000000000").slice(0, 18);
-  return BigInt(whole || "0") * 10n ** 18n + BigInt(fractionPadded);
+  return BigInt(whole ?? "0") * 10n ** 18n + BigInt(fractionPadded);
 };
 
 export function WithdrawPanel() {

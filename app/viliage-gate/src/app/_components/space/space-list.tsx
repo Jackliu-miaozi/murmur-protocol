@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
 import { api } from "@/trpc/react";
 import { SpaceCreateForm } from "@/app/_components/space/space-new";
 
@@ -48,7 +47,7 @@ export function SpaceList() {
                       : "No social handle"}
                   </p>
                 </div>
-                <span className="text-sm text-[var(--color-accent)]">View -></span>
+                <span className="text-sm text-[var(--color-accent)]">View -&gt;</span>
               </div>
               {space.description && (
                 <p className="mt-3 text-sm text-[var(--color-ink-soft)]">

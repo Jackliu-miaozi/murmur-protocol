@@ -14,7 +14,7 @@ export function OpenGovPanel({ topicId }: { topicId: number }) {
   const [summary, setSummary] = useState("");
   const [sentiment, setSentiment] = useState("0.5");
   const [curatedIds, setCuratedIds] = useState("");
-  const [status, setStatus] = useState("READY");
+  const [status, setStatus] = useState<"READY" | "APPROVED" | "REJECTED" | "EXECUTED" | "DRAFT">("READY");
   const [proposalId, setProposalId] = useState("");
   const [txHash, setTxHash] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
@@ -139,7 +139,7 @@ export function OpenGovPanel({ topicId }: { topicId: number }) {
           <div className="mt-4 grid gap-3">
             <select
               value={status}
-              onChange={(event) => setStatus(event.target.value)}
+              onChange={(event) => setStatus(event.target.value as "READY" | "APPROVED" | "REJECTED" | "EXECUTED" | "DRAFT")}
               className="rounded-2xl border border-black/10 bg-white/70 px-4 py-3 text-sm"
             >
               <option value="READY">READY</option>

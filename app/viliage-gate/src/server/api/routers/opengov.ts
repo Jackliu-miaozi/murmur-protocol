@@ -116,7 +116,7 @@ export const opengovRouter = createTRPCRouter({
       return {
         report: {
           ...report,
-          curatedMessageIds: JSON.parse(report.curatedMessageIds),
+          curatedMessageIds: JSON.parse(report.curatedMessageIds) as number[],
         },
       };
     }),

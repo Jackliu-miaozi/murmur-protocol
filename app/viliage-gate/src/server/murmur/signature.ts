@@ -132,7 +132,7 @@ export class SupabaseSignatureService implements SignatureService {
   }
 
   private getChainId() {
-    const raw = process.env.NEXT_PUBLIC_CHAIN_ID || process.env.CHAIN_ID;
+    const raw = process.env.NEXT_PUBLIC_CHAIN_ID ?? process.env.CHAIN_ID;
     const chainId = Number(raw);
     if (!raw || Number.isNaN(chainId)) {
       throw new Error("CHAIN_ID is required for signatures");

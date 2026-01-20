@@ -42,6 +42,24 @@ export type RouterOutputs = inferRouterOutputs<AppRouter>;
 export function TRPCReactProvider(props: { children: React.ReactNode }) {
   const queryClient = getQueryClient();
 
+  return (
+    <QueryClientProvider client={queryClient}>
+      <TRPCReactProviderInner queryClient={queryClient}>
+        {props.children}
+      </TRPCReactProviderInner>
+    </QueryClientProvider>
+  );
+}
+
+type TRPCReactProviderInnerProps = {
+  children: React.ReactNode;
+  queryClient: QueryClient;
+};
+
+function TRPCReactProviderInner({
+  children,
+  queryClient,
+}: TRPCReactProviderInnerProps) {
   const walletAuth = useWalletAuth();
 
   const [trpcClient] = useState(() =>
@@ -74,11 +92,9 @@ export function TRPCReactProvider(props: { children: React.ReactNode }) {
   );
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <api.Provider client={trpcClient} queryClient={queryClient}>
-        {props.children}
-      </api.Provider>
-    </QueryClientProvider>
+    <api.Provider client={trpcClient} queryClient={queryClient}>
+      {children}
+    </api.Provider>
   );
 }
 

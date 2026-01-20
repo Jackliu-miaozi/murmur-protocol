@@ -22,6 +22,7 @@ export const spaceRouter = createTRPCRouter({
         });
         return { space };
       } catch (error) {
+        console.error(error); // Log error
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "Space already exists",

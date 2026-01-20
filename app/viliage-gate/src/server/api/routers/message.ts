@@ -136,7 +136,12 @@ export const messageRouter = createTRPCRouter({
         input.limit,
         input.offset,
       );
-      return { messages };
+      return {
+        messages: messages.map((msg) => ({
+          ...msg,
+          vpCost: msg.vpCost.toString(),
+        })),
+      };
     }),
 
   /**
@@ -155,7 +160,7 @@ export const messageRouter = createTRPCRouter({
       }
 
       const topic = await topicStore.get(message.topicId);
-      if (!topic || topic.status !== TopicStatus.LIVE) {
+      if (topic?.status !== TopicStatus.LIVE) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "Topic is not live",

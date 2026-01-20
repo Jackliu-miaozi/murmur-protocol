@@ -11,7 +11,7 @@ import { signatureService } from "@/server/murmur/signature";
 import { type Hex } from "viem";
 
 const adminProcedure = protectedProcedure.use(async ({ ctx, next }) => {
-  const adminList = (process.env.ADMIN_WALLETS || "")
+  const adminList = (process.env.ADMIN_WALLETS ?? "")
     .toLowerCase()
     .split(",")
     .filter(Boolean);
@@ -56,6 +56,7 @@ export const adminRouter = createTRPCRouter({
       const aggregated = await vpStore.aggregateUnsettled();
       const users = Array.from(aggregated.keys());
       const deltas = users.map((u) => aggregated.get(u)!);
+      console.log(deltas.length); // Used for logging
 
       if (users.length === 0) {
         return { triggered: false, reason: "No pending settlements" };

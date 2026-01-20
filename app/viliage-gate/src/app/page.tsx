@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { AppShell } from "@/app/_components/app-shell";
-import { TopicList } from "@/app/_components/post";
+import { TopicList } from "@/app/_components/topic/topic-list";
 import { HydrateClient } from "@/trpc/server";
 
 export default async function Home() {

@@ -21,9 +21,9 @@ export async function GET(request: Request) {
   }
 
   const threshold = BigInt(
-    process.env.SETTLEMENT_THRESHOLD_VP || "10000000000000000000000",
+    process.env.SETTLEMENT_THRESHOLD_VP ?? "10000000000000000000000",
   );
-  const minUsers = Number(process.env.MIN_SETTLEMENT_USERS || "5");
+  const minUsers = Number(process.env.MIN_SETTLEMENT_USERS ?? "5");
 
   const deltas = users.map((u) => aggregated.get(u)!);
   const totalVP = deltas.reduce((sum, d) => sum + d, 0n);

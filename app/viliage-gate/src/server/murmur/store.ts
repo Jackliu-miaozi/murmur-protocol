@@ -19,8 +19,8 @@ export type Topic = Prisma.TopicGetPayload<object>;
 export type Message = Prisma.MessageGetPayload<object>;
 export type VpConsumption = Prisma.VpConsumptionGetPayload<object>;
 export type CuratedList = Prisma.CuratedListGetPayload<object>;
-export type VpReward = Prisma.VpRewardGetPayload<object>;
-export type OpenGovReport = Prisma.OpenGovReportGetPayload<object>;
+// export type VpReward = Prisma.VpRewardGetPayload<object>;
+// export type OpenGovReport = Prisma.OpenGovReportGetPayload<object>;
 
 /**
  * Topic Store
@@ -33,7 +33,7 @@ export const topicStore = {
     duration: number;
     freezeWindow: number;
     curatedLimit: number;
-    spaceId?: number;
+    spaceId: number;
     ipfsHash?: string;
   }) {
     const metadata = JSON.stringify({
@@ -543,7 +543,7 @@ export const vpBalanceStore = {
       (Date.now() - user.lastRespiration.getTime()) / 3_600_000;
     if (hoursSince <= 0) return 0n;
 
-    const rate = parseFloat(process.env.RESPIRATION_RATE || "0.05");
+    const rate = parseFloat(process.env.RESPIRATION_RATE ?? "0.05");
     const recoverable = BigInt(Math.floor(hoursSince * rate * 100)) * maxVp / 100n;
     const deficit = maxVp - currentVp;
     const toRecover = recoverable < deficit ? recoverable : deficit;
@@ -577,7 +577,7 @@ export const vpRewardStore = {
 
     if (!message) return;
 
-    const rate = parseFloat(process.env.LIKE_RESONANCE_RATE || "0.1");
+    const rate = parseFloat(process.env.LIKE_RESONANCE_RATE ?? "0.1");
     const cost = BigInt(message.vpCost.toString());
     const bonus = (cost * BigInt(Math.round(rate * 100))) / 100n;
 
@@ -618,7 +618,7 @@ export const vpRewardStore = {
     if (!message) return;
 
     const bonus = BigInt(
-      process.env.CURATED_BONUS_VP || "500000000000000000000",
+      process.env.CURATED_BONUS_VP ?? "500000000000000000000",
     );
 
     try {
