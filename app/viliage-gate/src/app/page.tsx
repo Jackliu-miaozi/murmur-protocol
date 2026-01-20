@@ -1,54 +1,72 @@
 import { Suspense } from "react";
+import Link from "next/link";
+import { AppShell } from "@/app/_components/app-shell";
 import { TopicList } from "@/app/_components/post";
 import { HydrateClient } from "@/trpc/server";
 
 export default async function Home() {
   return (
     <HydrateClient>
-      <main className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-b from-[#1a1a2e] to-[#16213e] text-white">
-        <div className="container flex flex-col items-center justify-center gap-12 px-4 py-16">
-          <h1 className="text-5xl font-extrabold tracking-tight sm:text-[5rem]">
-            <span className="text-[hsl(280,100%,70%)]">Murmur</span> Protocol
-          </h1>
-
-          <p className="text-center text-xl text-gray-300">
-            Decentralized discussion platform with curated NFT memories
-          </p>
-
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
-            <div className="rounded-xl bg-white/10 p-6">
-              <h3 className="mb-2 text-xl font-bold text-purple-400">
-                💬 Discuss
-              </h3>
-              <p className="text-gray-300">
-                Join topics, share insights, and engage with the community
+      <AppShell>
+        <section className="grid gap-10 lg:grid-cols-[1.2fr_0.8fr]">
+          <div className="rounded-3xl border border-black/10 bg-white/70 p-10 shadow-sm">
+            <p className="text-xs uppercase tracking-[0.35em] text-[var(--color-ink-soft)]">
+              OpenGov signal
+            </p>
+            <h1 className="mt-4 text-5xl font-semibold text-[var(--color-ink)]">
+              Coordinate the next proposal cycle with clarity.
+            </h1>
+            <p className="mt-4 max-w-xl text-[var(--color-ink-soft)]">
+              Murmur connects project teams and participants through structured
+              debate, curated insights, and verifiable community sentiment.
+            </p>
+            <div className="mt-8 flex flex-wrap gap-3">
+              <Link
+                href="/spaces"
+                className="rounded-full bg-[var(--color-accent)] px-6 py-3 text-sm font-semibold text-white hover:bg-[var(--color-accent-strong)]"
+              >
+                Explore spaces
+              </Link>
+              <Link
+                href="/wallet"
+                className="rounded-full border border-black/10 px-6 py-3 text-sm font-semibold text-[var(--color-ink)]"
+              >
+                View VP energy
+              </Link>
+            </div>
+          </div>
+          <div className="grid gap-4">
+            <div className="rounded-3xl border border-black/10 bg-[var(--color-ink)] p-8 text-white shadow-sm">
+              <p className="text-xs uppercase tracking-[0.3em] text-white/60">
+                Dual view
+              </p>
+              <h2 className="mt-3 text-2xl font-semibold">
+                Live Arena + Project Timeline
+              </h2>
+              <p className="mt-3 text-sm text-white/70">
+                Combine social signal with structured debate and OpenGov outcomes.
               </p>
             </div>
-            <div className="rounded-xl bg-white/10 p-6">
-              <h3 className="mb-2 text-xl font-bold text-purple-400">
-                ⭐ Curate
-              </h3>
-              <p className="text-gray-300">
-                Like messages to vote for the best contributions
+            <div className="rounded-3xl border border-black/10 bg-white/70 p-8 shadow-sm">
+              <p className="text-xs uppercase tracking-[0.3em] text-[var(--color-ink-soft)]">
+                Rewards
               </p>
-            </div>
-            <div className="rounded-xl bg-white/10 p-6">
-              <h3 className="mb-2 text-xl font-bold text-purple-400">
-                🎨 Mint
-              </h3>
-              <p className="text-gray-300">
-                Preserve curated discussions as NFT memories
+              <h2 className="mt-3 text-2xl font-semibold">
+                VP-powered curation
+              </h2>
+              <p className="mt-3 text-sm text-[var(--color-ink-soft)]">
+                Thoughtful feedback recovers VP, surfaces curated insight, and
+                becomes a minted memory once landed.
               </p>
             </div>
           </div>
-
-          <Suspense
-            fallback={<div className="text-gray-400">Loading topics...</div>}
-          >
+        </section>
+        <section className="mt-12">
+          <Suspense fallback={<div>Loading topics...</div>}>
             <TopicList />
           </Suspense>
-        </div>
-      </main>
+        </section>
+      </AppShell>
     </HydrateClient>
   );
 }

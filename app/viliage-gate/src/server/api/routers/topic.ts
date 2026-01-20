@@ -88,10 +88,13 @@ export const topicRouter = createTRPCRouter({
         throw new Error("Topic not found");
       }
 
+      const freezeInfo = topicStore.getFreezeInfo(topic);
       return {
         ...topic,
-        isFrozen: topicStore.isFrozen(topic),
-        isExpired: topicStore.isExpired(topic),
+        isFrozen: freezeInfo.isFrozen,
+        isExpired: freezeInfo.isExpired,
+        freezeStartMs: freezeInfo.freezeStartMs,
+        endMs: freezeInfo.endMs,
       };
     }),
 

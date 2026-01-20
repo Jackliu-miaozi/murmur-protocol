@@ -205,7 +205,13 @@ export const settlementRouter = createTRPCRouter({
       // Update topic status to MINTED
       await topicStore.updateStatus(input.topicId, TopicStatus.MINTED);
 
-      return { nft };
+      return {
+        nft,
+        txHashSaved: Boolean(input.txHash),
+        note: input.txHash
+          ? "txHash saved"
+          : "txHash missing. Provide it to keep an audit trail.",
+      };
     }),
 
   /**
@@ -226,6 +232,7 @@ export const settlementRouter = createTRPCRouter({
         consumptions: consumptions.map((c) => ({
           ...c,
           amount: c.amount.toString(),
+          topicTitle: c.topic?.title ?? null,
         })),
         total: total.toString(),
         unsettled: unsettled.toString(),

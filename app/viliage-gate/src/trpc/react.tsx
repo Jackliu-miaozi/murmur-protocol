@@ -7,6 +7,7 @@ import { type inferRouterInputs, type inferRouterOutputs } from "@trpc/server";
 import { useState } from "react";
 import SuperJSON from "superjson";
 
+import { useWalletAuth } from "@/app/_components/wallet-auth";
 import { type AppRouter } from "@/server/api/root";
 import { createQueryClient } from "./query-client";
 
@@ -41,6 +42,8 @@ export type RouterOutputs = inferRouterOutputs<AppRouter>;
 export function TRPCReactProvider(props: { children: React.ReactNode }) {
   const queryClient = getQueryClient();
 
+  const walletAuth = useWalletAuth();
+
   const [trpcClient] = useState(() =>
     api.createClient({
       links: [
@@ -52,9 +55,17 @@ export function TRPCReactProvider(props: { children: React.ReactNode }) {
         httpBatchStreamLink({
           transformer: SuperJSON,
           url: getBaseUrl() + "/api/trpc",
-          headers: () => {
+          headers: async () => {
             const headers = new Headers();
             headers.set("x-trpc-source", "nextjs-react");
+
+            const authHeaders = await walletAuth.signHeaders();
+            if (authHeaders) {
+              headers.set("x-wallet-address", authHeaders["x-wallet-address"]);
+              headers.set("x-wallet-message", authHeaders["x-wallet-message"]);
+              headers.set("x-wallet-signature", authHeaders["x-wallet-signature"]);
+            }
+
             return headers;
           },
         }),

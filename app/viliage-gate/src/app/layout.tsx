@@ -1,8 +1,9 @@
 import "@/styles/globals.css";
 
 import { type Metadata } from "next";
-import { Geist } from "next/font/google";
+import { Fraunces, Space_Grotesk } from "next/font/google";
 
+import { WagmiProviders } from "@/app/_components/wagmi-provider";
 import { TRPCReactProvider } from "@/trpc/react";
 
 export const metadata: Metadata = {
@@ -11,18 +12,25 @@ export const metadata: Metadata = {
   icons: [{ rel: "icon", url: "/favicon.ico" }],
 };
 
-const geist = Geist({
+const displayFont = Fraunces({
   subsets: ["latin"],
-  variable: "--font-geist-sans",
+  variable: "--font-display",
+});
+
+const bodyFont = Space_Grotesk({
+  subsets: ["latin"],
+  variable: "--font-body",
 });
 
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${geist.variable}`}>
+    <html lang="en" className={`${displayFont.variable} ${bodyFont.variable}`}>
       <body>
-        <TRPCReactProvider>{children}</TRPCReactProvider>
+        <WagmiProviders>
+          <TRPCReactProvider>{children}</TRPCReactProvider>
+        </WagmiProviders>
       </body>
     </html>
   );

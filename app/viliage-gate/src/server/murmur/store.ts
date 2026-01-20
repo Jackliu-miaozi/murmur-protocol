@@ -147,6 +147,21 @@ export const topicStore = {
     });
   },
 
+  getFreezeInfo(topic: Topic) {
+    const now = Date.now();
+    const createdAt = topic.createdAt.getTime();
+    const durationMs = topic.duration * 1000;
+    const freezeStartMs = createdAt + durationMs - topic.freezeWindow * 1000;
+    const endMs = createdAt + durationMs;
+
+    return {
+      freezeStartMs,
+      endMs,
+      isFrozen: now >= freezeStartMs && now < endMs,
+      isExpired: now >= endMs,
+    };
+  },
+
   async incrementMessageCount(id: number) {
     return prisma.topic.update({
       where: { id },
@@ -286,6 +301,8 @@ export const vpStore = {
   async getByUser(userAddress: string) {
     return prisma.vpConsumption.findMany({
       where: { userAddress: userAddress.toLowerCase() },
+      include: { topic: { select: { title: true } } },
+      orderBy: { createdAt: "desc" },
     });
   },
 
